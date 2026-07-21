@@ -1,0 +1,32 @@
+# Default-deny: this template ships no working ~/.claude state, only source
+# files. Anything that isn't explicitly tracked in the include manifest below
+# should never accidentally get swept into this repo by a future commit.
+*
+
+# Explicitly allow tracked template files and directories.
+!.gitignore
+!README.md
+!LICENSE
+!CLAUDE.md
+!WORKFLOW.md
+!settings.example.json
+!rules/
+!rules/**
+!agents/
+!agents/**
+!skills/
+!skills/**
+!hooks/
+!hooks/**
+
+# Never track local, personal, or generated Claude Code state, even if a
+# future copy step drops it in here by mistake.
+settings.json
+settings.local.json
+.claude.json
+.mcp.json
+plans/
+projects/
+history.jsonl
+*.log
+.DS_Store
