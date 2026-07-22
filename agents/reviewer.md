@@ -2,6 +2,7 @@
 name: reviewer
 description: "Code review agent. Reviews changes for quality, correctness, and convention adherence. Read-only — cannot modify files."
 model: opus
+effort: xhigh
 maxTurns: 20
 tools:
   - Read

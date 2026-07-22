@@ -2,6 +2,7 @@
 name: researcher
 description: "Web research agent. Searches docs, best practices, and prior art using the 3-angle search methodology. Returns structured findings with citations. Read-only — cannot modify files."
 model: sonnet
+effort: high
 maxTurns: 30
 skills:
   - search
@@ -16,6 +17,9 @@ tools:
   - mcp__exa__crawling_exa
   - mcp__context7__resolve-library-id
   - mcp__context7__query-docs
+disallowedTools:
+  - Write
+  - Edit
 mcpServers:
   - exa
   - context7

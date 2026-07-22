@@ -2,7 +2,7 @@
 name: design-reviewer
 description: "Reviews a finalized design draft against the real codebase, current web best practices, and internal consistency. Returns a strict JSON verdict. Read-only — cannot modify files. Used by the /design auto-review loop."
 model: opus
-effort: high
+effort: xhigh
 maxTurns: 25
 skills:
   - search

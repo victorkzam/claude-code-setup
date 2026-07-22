@@ -6,6 +6,9 @@ tools:
   - Read
   - Glob
   - Grep
+disallowedTools:
+  - Write
+  - Edit
 color: gray
 ---
 
