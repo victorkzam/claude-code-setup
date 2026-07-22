@@ -2,7 +2,7 @@
 name: build
 description: "Implement an approved design by orchestrating subagents. Use when the user says /build, 'implement this', 'build this', or approves a /design output. Main agent acts as orchestrator: decomposes work, delegates to implementer subagent, reviews via reviewer subagent, iterates up to 3 times, then stops for human approval."
 disable-model-invocation: true
-argument-hint: <slug | path to <slug>-tasks.md | 'continue'>
+argument-hint: <slug | path to <slug>-tasks.md>
 allowed-tools:
   - Read
   - Glob
@@ -16,6 +16,8 @@ allowed-tools:
   - Bash(swift:*)
   - Bash(xcodebuild:*)
   - Bash(gh:*)
+  - Bash(touch /tmp/claude-orchestrator-active*)
+  - Bash(rm -f /tmp/claude-orchestrator-active*)
 ---
 
 # Build Workflow — Orchestrator Pattern
@@ -89,8 +91,9 @@ Set the Agent call's `model` to the task's `model:` field (`sonnet` default, `op
 the task says so). Spawn independent tasks in one turn, synchronously; dependent tasks
 sequentially (per Phase 1).
 
-For a cost-bounded run, set a `task_budget` (advisory, beta header
-`task-budgets-2026-03-13`, minimum 20k tokens) on the implementer spawn. Skip it for
+For a cost-bounded run, set a `task_budget` (advisory, minimum 20k tokens; use whichever
+task-budgets beta header is supported at run time — check current Claude Code release
+notes rather than assuming a fixed value) on the implementer spawn. Skip it for
 quality-critical tasks where the work should not be scoped to a budget.
 
 ## Phase 2→3 Gate: Verify against ground truth (orchestrator, main thread)
