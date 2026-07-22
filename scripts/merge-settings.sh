@@ -28,10 +28,12 @@
 # Semantics notes:
 #   * Scalar-wins / null-safe: this script never uses recursive object merge, so a
 #     null template value can never delete an adopter key.
-#   * Malformed nested shapes (a non-object `.hooks` / `.permissions`, or a
-#     non-array `.permissions.allow`) are REJECTED up front with an explicit exit-1
-#     refusal on stderr in BOTH modes, so a bad shape never reaches jq as a raw
-#     exit-5 crash.
+#   * Malformed nested shapes — a non-object `.hooks` / `.permissions`, a
+#     non-array `.permissions.allow`, a non-array `.hooks.<event>` value, a
+#     non-object element of one, a non-array inner `.hooks` list, a non-object
+#     inner hook entry, or a non-string `.command` on one — are REJECTED up front
+#     with an explicit exit-1 refusal on stderr in BOTH modes, so a bad shape
+#     never reaches jq as a raw exit-5 crash.
 #   * The unchanged/write-skip decision is SEMANTIC (sorted-compact canonical
 #     compare of target vs merged), not raw-byte: formatting-only differences (e.g.
 #     the template's hand-authored blank lines) never trigger a phantom rewrite.
@@ -121,8 +123,12 @@ ccs_build_merged() {
 
 # ccs_validate_object <target> — refuse (exit 1) unparseable / non-object targets
 # and malformed nested shapes. A syntactically-valid object whose `.hooks` /
-# `.permissions` is not an object, or whose `.permissions.allow` is not an array,
-# is rejected here (both modes) so it never reaches jq as a raw exit-5 crash.
+# `.permissions` is not an object, whose `.permissions.allow` is not an array, OR
+# any NESTED shape the merge jq actually walks (every `.hooks.<event>` value; each
+# element of it; that element's own `.hooks` inner list, if present; and each
+# inner entry's `.command`, where the merge does a string split/match on it) is
+# rejected here (both modes) so a bad shape never reaches jq as a raw exit-5
+# crash — only the documented 0/1/2 exit contract (see header) is ever observed.
 ccs_validate_object() {
   local kind msg
   if ! jq empty "$1" >/dev/null 2>&1; then
@@ -135,13 +141,37 @@ ccs_validate_object() {
   msg="$( jq -r '
     (.hooks // null) as $h
     | (.permissions // null) as $p
-    | if ($h != null and ($h | type) != "object")
-        then "field .hooks must be a JSON object, not a " + ($h | type)
-      elif ($p != null and ($p | type) != "object")
-        then "field .permissions must be a JSON object, not a " + ($p | type)
-      elif ($p != null and ($p.allow != null) and ($p.allow | type) != "array")
-        then "field .permissions.allow must be a JSON array, not a " + ($p.allow | type)
-      else "" end' "$1" )"
+    | def hookmsg:
+        ($h // {}) | to_entries[]
+        | .key as $ename
+        | if (.value | type) != "array" then
+            "field .hooks." + $ename + " must be a JSON array, not a " + (.value | type)
+          else
+            (.value[] |
+              if type != "object" then
+                "field .hooks." + $ename + "[] entry must be a JSON object, not a " + type
+              elif has("hooks") and ((.hooks | type) != "array") then
+                "field .hooks." + $ename + "[].hooks must be a JSON array, not a " + (.hooks | type)
+              else
+                (.hooks // [])[] |
+                  if type != "object" then
+                    "field .hooks." + $ename + "[].hooks[] entry must be a JSON object, not a " + type
+                  elif has("command") and ((.command | type) != "string") then
+                    "field .hooks." + $ename + "[].hooks[].command must be a JSON string, not a " + (.command | type)
+                  else empty
+                  end
+              end
+            )
+          end;
+    if ($h != null and ($h | type) != "object")
+      then "field .hooks must be a JSON object, not a " + ($h | type)
+    elif ($p != null and ($p | type) != "object")
+      then "field .permissions must be a JSON object, not a " + ($p | type)
+    elif ($p != null and ($p.allow != null) and ($p.allow | type) != "array")
+      then "field .permissions.allow must be a JSON array, not a " + ($p.allow | type)
+    elif ($h != null)
+      then ([hookmsg] | first) // ""
+    else "" end' "$1" )"
   if [ -n "$msg" ]; then
     ccs_die 1 "$msg: $1"
   fi

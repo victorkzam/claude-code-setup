@@ -281,6 +281,63 @@ EOF
   [[ "$output" == *".permissions.allow must be a JSON array"* ]]
 }
 
+# --- malformed NESTED hook shapes (regression: must refuse, never raw jq exit-5) --
+
+@test "refusal: event value is a string, not an array (exit 1, CCS message, untouched)" {
+  printf '{"hooks": {"PreToolUse": "not-an-array"}}' > "$CLAUDE_CONFIG_DIR/settings.json"
+  local sum1 sum2
+  sum1="$( cksum < "$CLAUDE_CONFIG_DIR/settings.json" )"
+  run bash "$REPO_ROOT/$MERGE" --apply
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CCS:"* ]]
+  [[ "$output" == *".hooks.PreToolUse must be a JSON array"* ]]
+  sum2="$( cksum < "$CLAUDE_CONFIG_DIR/settings.json" )"
+  [ "$sum1" = "$sum2" ]
+  # dry-run refuses identically, never a raw jq crash
+  run bash "$REPO_ROOT/$MERGE" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".hooks.PreToolUse must be a JSON array"* ]]
+}
+
+@test "refusal: hook entry .command is a number, not a string (exit 1, CCS message)" {
+  cat > "$CLAUDE_CONFIG_DIR/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": 12345 } ] }
+    ]
+  }
+}
+EOF
+  run bash "$REPO_ROOT/$MERGE" --apply
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CCS:"* ]]
+  [[ "$output" == *".hooks.PreToolUse[].hooks[].command must be a JSON string"* ]]
+  run bash "$REPO_ROOT/$MERGE" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".hooks.PreToolUse[].hooks[].command must be a JSON string"* ]]
+}
+
+@test "refusal: inner .hooks value is an object, not an array (exit 1, CCS message)" {
+  cat > "$CLAUDE_CONFIG_DIR/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": { "type": "command", "command": "bash foo.sh" } }
+    ]
+  }
+}
+EOF
+  run bash "$REPO_ROOT/$MERGE" --apply
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CCS:"* ]]
+  [[ "$output" == *".hooks.PreToolUse[].hooks must be a JSON array"* ]]
+  run bash "$REPO_ROOT/$MERGE" --dry-run
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".hooks.PreToolUse[].hooks must be a JSON array"* ]]
+}
+
 # --- usage errors (exit 2) ---------------------------------------------------
 
 @test "usage: no mode is a usage error (exit 2)" {
