@@ -18,6 +18,21 @@
 !skills/**
 !hooks/
 !hooks/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**
+!.github/
+!.github/**
+
+# Allow the repo-scoped setup skill under .claude/, but nothing else in
+# .claude/ (agent-memory, local settings, etc. must stay ignored). Gitignore
+# requires un-ignoring each parent directory level before its children, so
+# the chain below is intentionally explicit rather than a single !.claude/**.
+!.claude/
+!.claude/skills/
+!.claude/skills/setup/
+!.claude/skills/setup/**
 
 # Never track local, personal, or generated Claude Code state, even if a
 # future copy step drops it in here by mistake.
@@ -30,3 +45,7 @@ projects/
 history.jsonl
 *.log
 .DS_Store
+
+# Security rail: this repo must never ship an active repo-local settings
+# file, even though .claude/ is partially un-ignored above.
+.claude/settings.json
