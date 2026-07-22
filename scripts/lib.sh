@@ -98,6 +98,25 @@ refuse_symlink() {
   fi
 }
 
+# --- manifest path safety -----------------------------------------------------
+
+# ccs_validate_manifest_rel <rel> — refuse (exit 1) a manifest-sourced relative
+# path that is absolute, or that contains a ".." path component. The ".." check
+# matches only a FULL path segment (leading "../", embedded "/../", trailing
+# "/..", or exactly ".."), never a bare substring, so legitimate filenames that
+# merely contain dots (e.g. "foo..bar.md") stay valid. Every manifest-reading
+# loop must call this before the line is used to build a destination path —
+# same "refuse before writing" convention as refuse_symlink above.
+ccs_validate_manifest_rel() {
+  local rel="$1"
+  case "$rel" in
+    /*)
+      ccs_die 1 "manifest path is absolute, refusing: $rel" ;;
+    ..|../*|*/../*|*/..)
+      ccs_die 1 "manifest path escapes the config dir: $rel" ;;
+  esac
+}
+
 # --- prerequisites -----------------------------------------------------------
 
 # ccs_require_jq — jq-dependent callers fail closed (exit 2) when jq is absent.

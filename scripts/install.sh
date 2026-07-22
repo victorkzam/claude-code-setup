@@ -72,6 +72,31 @@ parse_args() {
 
 # --- guards --------------------------------------------------------------
 
+# validate_manifest_rel <rel> — shared guard for every manifest-reading loop.
+# Delegates the path-escape check to lib.sh (shared with any future consumer),
+# then enforces the closed category allowlist, which is install.sh-local since
+# CATEGORIES lives here.
+validate_manifest_rel() {
+  local rel="$1"
+  ccs_validate_manifest_rel "$rel"
+  case "$CATEGORIES" in
+    *" ${rel%%/*} "*) : ;;
+    *) ccs_die 1 "manifest path has an unmanaged category: $rel" ;;
+  esac
+}
+
+# validate_manifest — validate every relative path in the manifest BEFORE any
+# writes happen (mkdir, backup dir, copy), so a single malformed/malicious line
+# fails the whole run instead of leaving partial side effects from lines read
+# ahead of it.
+validate_manifest() {
+  local rel
+  while IFS= read -r rel || [ -n "$rel" ]; do
+    [ -n "$rel" ] || continue
+    validate_manifest_rel "$rel"
+  done < "$MANIFEST"
+}
+
 main_guards() {
   if ccs_claude_dir_is_regular_file; then
     ccs_die 2 "config dir '$CLAUDE_DIR' exists but is not a directory"
@@ -80,6 +105,7 @@ main_guards() {
     ccs_die 2 "config dir resolves to the repo root ($REPO_ROOT) — refusing to install onto itself"
   fi
   [ -e "$MANIFEST" ] || ccs_die 2 "manifest not found: $MANIFEST"
+  validate_manifest
 }
 
 # --- directory provisioning ------------------------------------------------

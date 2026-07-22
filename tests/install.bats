@@ -222,6 +222,47 @@ _receipt_files() {
 
 # --- symlinked destination file ------------------------------------------------
 
+# --- manifest path-traversal guard --------------------------------------------
+
+# _sandboxed_repo — copy the repo tree into the sandbox so a malicious manifest
+# line can be injected without touching the real scripts/manifest.txt. Echoes
+# the copy's root path.
+_sandboxed_repo() {
+  local copy="$SANDBOX/repo-copy"
+  mkdir -p "$copy"
+  cp -R "$REPO_ROOT/." "$copy/"
+  printf '%s\n' "$copy"
+}
+
+@test "a manifest line escaping the config dir via ../ is refused: non-zero exit, names the line, writes nothing outside CLAUDE_DIR" {
+  local copy
+  copy="$( _sandboxed_repo )"
+  # A faithful PoC: if the guard were absent, this line would resolve to
+  # "$CLAUDE_CONFIG_DIR/../pwned-outside.txt" == "$HOME/pwned-outside.txt", and
+  # the source file below would let that write actually succeed.
+  printf '../pwned-outside.txt\n' >> "$copy/scripts/manifest.txt"
+  printf 'pwned\n' > "$copy/pwned-outside.txt"
+
+  run bash "$copy/scripts/install.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CCS:"* ]]
+  [[ "$output" == *"../pwned-outside.txt"* ]]
+  [ ! -e "$HOME/pwned-outside.txt" ]
+  [ ! -e "$CLAUDE_CONFIG_DIR" ]
+}
+
+@test "an absolute-path manifest line is refused: non-zero exit and names the line" {
+  local copy
+  copy="$( _sandboxed_repo )"
+  printf '/etc/should-not-install.txt\n' >> "$copy/scripts/manifest.txt"
+
+  run bash "$copy/scripts/install.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CCS:"* ]]
+  [[ "$output" == *"/etc/should-not-install.txt"* ]]
+  [ ! -e "$CLAUDE_CONFIG_DIR" ]
+}
+
 @test "a symlinked destination file is refused, reported, and other files still install" {
   local agent_rel hook_rel target
   agent_rel="$( _agent_rel )"
