@@ -263,6 +263,30 @@ _sandboxed_repo() {
   [ ! -e "$CLAUDE_CONFIG_DIR" ]
 }
 
+# --- unchanged-hook executable-bit repair -------------------------------------
+
+@test "a byte-identical hook with a stripped +x bit is repaired without --force and stays a no-op after" {
+  _install
+  [ "$status" -eq 0 ]
+  local hook_rel
+  hook_rel="$( _hook_rel )"
+  chmod -x "$CLAUDE_CONFIG_DIR/$hook_rel"
+  [ ! -x "$CLAUDE_CONFIG_DIR/$hook_rel" ]
+
+  _install
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CCS-STATUS:unchanged:$hook_rel"* ]]
+  [[ "$output" == *"restored missing executable bit: $hook_rel"* ]]
+  [ -x "$CLAUDE_CONFIG_DIR/$hook_rel" ]
+  cmp -s "$REPO_ROOT/$hook_rel" "$CLAUDE_CONFIG_DIR/$hook_rel"
+
+  _install
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"restored missing executable bit"* ]]
+  [[ "$output" == *"CCS-STATUS:unchanged:$hook_rel"* ]]
+  [ -x "$CLAUDE_CONFIG_DIR/$hook_rel" ]
+}
+
 @test "a symlinked destination file is refused, reported, and other files still install" {
   local agent_rel hook_rel target
   agent_rel="$( _agent_rel )"

@@ -146,7 +146,11 @@ handle_install() {
 }
 
 handle_unchanged() {
-  local rel="$1" dst="$2"
+  local rel="$1" dst="$2" category="$3"
+  if [ "$DRY_RUN" -eq 0 ] && [ "$category" = hooks ] && [ ! -x "$dst" ]; then
+    chmod +x "$dst"
+    printf 'CCS: restored missing executable bit: %s\n' "$rel" >&2
+  fi
   ccs_status unchanged "$rel"
   [ "$DRY_RUN" -eq 1 ] && return 0
   ccs_receipt_append "$BACKUP_RUN_DIR" unchanged "$dst"
@@ -202,7 +206,7 @@ process_file() {
   if [ ! -e "$dst" ]; then
     handle_install "$rel" "$src" "$dst" "$category"
   elif cmp -s "$src" "$dst"; then
-    handle_unchanged "$rel" "$dst"
+    handle_unchanged "$rel" "$dst" "$category"
   else
     handle_differs "$rel" "$src" "$dst" "$category"
   fi
