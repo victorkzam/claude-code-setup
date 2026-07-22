@@ -126,8 +126,10 @@ never lands process-rule edits inside the feature PR.
 | post-design checkpoint | — | **The exit-plan-mode boundary.** You approve, then leave plan mode |
 | `/build`, `/ship` | **execute** (default/acceptEdits) | `disable-model-invocation: true`; run explicitly after approval |
 
-`defaultMode` stays `"plan"` globally — the plan-first guarantee is preserved; the
-transition is driven by the checkpoint, not by weakening the default.
+The shipped template sets `defaultMode: "auto"` — a convenience key, deliberately
+withheld from merges into existing configs. The plan-first guarantee comes from
+`/design` running in plan mode and the post-design checkpoint being the exit-plan-mode
+boundary, not from a global `"plan"` default.
 
 ## Model Usage Map
 
