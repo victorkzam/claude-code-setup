@@ -105,6 +105,45 @@ EOF
   [ "$( cat "$TARGET" )" = "$before" ]
 }
 
+@test "malformed: an END marker before BEGIN is refused, target untouched, no backup dir created" {
+  cat > "$TARGET" <<'EOF'
+# Header
+<!-- END claude-code-setup workflow-rules v1 -->
+orphaned tail
+<!-- BEGIN claude-code-setup workflow-rules v1 -->
+EOF
+  local before
+  before="$( cat "$TARGET" )"
+  run bash "$MERGE" --apply
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"malformed managed block"* ]]
+  [[ "$output" == *"found 1 BEGIN / 1 END marker(s)"* ]]
+  [[ "$output" == *"Repair manually"* ]]
+  [ "$( cat "$TARGET" )" = "$before" ]
+  [ ! -d "$CLAUDE_CONFIG_DIR/backups" ]
+}
+
+@test "malformed: duplicate BEGIN/END pairs are refused, target untouched, no backup dir created" {
+  cat > "$TARGET" <<'EOF'
+<!-- BEGIN claude-code-setup workflow-rules v1 -->
+first block
+<!-- END claude-code-setup workflow-rules v1 -->
+
+<!-- BEGIN claude-code-setup workflow-rules v1 -->
+second block
+<!-- END claude-code-setup workflow-rules v1 -->
+EOF
+  local before
+  before="$( cat "$TARGET" )"
+  run bash "$MERGE" --apply
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"malformed managed block"* ]]
+  [[ "$output" == *"found 2 BEGIN / 2 END marker(s)"* ]]
+  [[ "$output" == *"Repair manually"* ]]
+  [ "$( cat "$TARGET" )" = "$before" ]
+  [ ! -d "$CLAUDE_CONFIG_DIR/backups" ]
+}
+
 @test "symlinked target is refused (exit 1)" {
   printf 'real\n' > "$SANDBOX/real-claude.md"
   ln -s "$SANDBOX/real-claude.md" "$TARGET"
