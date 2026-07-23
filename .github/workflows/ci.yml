@@ -17,8 +17,13 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update -y && sudo apt-get install -y shellcheck
 
-      - name: Install bats (bats-core via npm)
-        run: npm install -g bats
+      # Same pinned git-checkout install as the macos job below. `npm install -g
+      # bats` broke on the ubuntu-24.04 runner image: npm's global prefix is
+      # /usr/local, whose man dirs the runner user cannot mkdir (EACCES).
+      - name: Install bats-core from a git checkout
+        run: |
+          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
+          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
 
       - name: shellcheck scripts + hooks
         # -x: scripts/*.sh source scripts/lib.sh; a bare single-file shellcheck
