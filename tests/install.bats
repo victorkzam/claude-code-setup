@@ -263,6 +263,33 @@ _sandboxed_repo() {
   [ ! -e "$CLAUDE_CONFIG_DIR" ]
 }
 
+# The two tests above are satisfied by install.sh's category allowlist alone
+# (../pwned-outside.txt and /etc/... never carry a valid category prefix, so
+# they never reach ccs_validate_manifest_rel's ".." check) — mutation testing
+# proved both stay green even with ccs_validate_manifest_rel neutered to a
+# no-op. This test uses a category-prefixed escape that ONLY the traversal
+# guard can catch.
+@test "a manifest line with a valid category prefix but an embedded ../ escape is refused by the traversal guard, not the category check" {
+  local copy
+  copy="$( _sandboxed_repo )"
+  # "agents/" is on install.sh's category allowlist, so only
+  # ccs_validate_manifest_rel's embedded-".." check -- not the category check --
+  # can catch this line. The two ".." segments cancel "agents" and then step out
+  # of CLAUDE_CONFIG_DIR (.claude), landing at $HOME.
+  local rel="agents/../../pwned-in-home.txt"
+  printf '%s\n' "$rel" >> "$copy/scripts/manifest.txt"
+  # A faithful PoC source file: if the guard were absent, this content would
+  # actually land at $HOME/pwned-in-home.txt.
+  printf 'pwned\n' > "$SANDBOX/pwned-in-home.txt"
+
+  run bash "$copy/scripts/install.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CCS: manifest path escapes the config dir: $rel"* ]]
+  [[ "$output" != *"unmanaged category"* ]]
+  [ ! -e "$HOME/pwned-in-home.txt" ]
+  [ ! -e "$CLAUDE_CONFIG_DIR" ]
+}
+
 # --- unchanged-hook executable-bit repair -------------------------------------
 
 @test "a byte-identical hook with a stripped +x bit is repaired without --force and stays a no-op after" {
