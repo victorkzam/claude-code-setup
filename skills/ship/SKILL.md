@@ -16,6 +16,7 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
+  - Agent
 ---
 
 # Ship Changes

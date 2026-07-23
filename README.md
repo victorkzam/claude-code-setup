@@ -4,7 +4,11 @@ A user-level `~/.claude` configuration for [Claude Code](https://claude.com/clau
 a `/design` → `/build` → `/ship` agentic workflow, six specialized subagents,
 model-routing rules, and a small set of hooks that turn advisory conventions into
 enforced ones. This is a sanitized export of a daily-driver setup, offered as a
-clone-and-use template.
+clone-and-use template — installed via a repo-scoped `/setup` skill (see
+[Quick Start](#6-quick-start-clone-and-use)) that installs and merges everything
+with a diff and your explicit consent, or, if you'd rather skip the
+conversational flow, [four scripts](#7-standalone-install-no-llm-run-the-scripts-directly)
+you can run by hand.
 
 ## 1. Why this exists
 
@@ -123,51 +127,185 @@ Redacted categories:
 ## 6. Quick Start (clone-and-use)
 
 ```bash
-# Agents — auto-register from their directory, available immediately
-cp agents/*.md ~/.claude/agents/
-
-# Skills — auto-register from their directory, available immediately
-cp -r skills/design skills/build skills/ship skills/compound skills/search ~/.claude/skills/
-
-# Hooks — require the settings.json wiring below AND a session restart
-cp hooks/*.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/*.sh
-
-# Rules
-mkdir -p ~/.claude/rules
-cp rules/orchestration.md ~/.claude/rules/
+git clone https://github.com/<you>/claude-code-setup.git
+cd claude-code-setup
+claude
 ```
 
-**CLAUDE.md**: merge, don't clobber. If you already have a `~/.claude/CLAUDE.md`,
-adapt the blocks in this repo's `CLAUDE.md` marked "example — replace with your
-own" (Identity, Stack Preferences) into your existing file rather than
-overwriting it — the `Workflow Rules` section is the part worth keeping intact.
+When Claude Code opens inside the clone for the first time, it shows a **trust
+dialog** for the folder. **Accept it.** Trusting the repo is what gates access
+to its `.claude/` directory — until you accept, the repo-scoped `/setup` skill
+and its pre-approved read-only commands (`check.sh`, the `--dry-run` forms of
+the install/merge scripts) aren't available to the session at all. This is a
+one-time, per-directory Claude Code trust decision, not something this repo
+configures.
 
-**settings.json**: hooks only take effect once wired into `~/.claude/settings.json`.
-Copy the `hooks` block from `settings.example.json` into your own settings file
-(merge, don't overwrite, if you have other settings), then **restart Claude Code**
-— hooks load at session start.
+Once trusted, type:
 
-## 7. Prerequisites
+```
+/setup
+```
+
+`/setup` walks a **preflight → install → merge → handoff** flow
+(`.claude/skills/setup/SKILL.md`). It runs a dry-run and shows you a diff
+before every write, and asks for explicit consent before anything actually
+changes your `~/.claude` config — nothing is written silently. Differing files
+are skipped by default per category (agents/hooks/rules/skills); you choose
+keep-vs-overwrite per category. `settings.json` and `CLAUDE.md` are merged one
+at a time, each behind its own diff-then-consent step.
+
+> [!WARNING]
+> **Never clone this repo directly into `~/.claude`, and never point
+> `CLAUDE_CONFIG_DIR` at this clone.** The scripts refuse to install a repo
+> onto itself (a source-equals-destination guard checks for exactly this), but
+> don't rely on that guard — treat the clone and your Claude config dir as two
+> separate locations, always. The scripts honor `CLAUDE_CONFIG_DIR` as an
+> override for the config dir they install into/read from (default
+> `~/.claude`); set it if your Claude Code config lives somewhere non-default.
+
+## 7. Standalone install (no LLM, run the scripts directly)
+
+If you'd rather not run `/setup` conversationally — or you're scripting an
+install — the four scripts it orchestrates can be run by hand, in this order.
+**Run them with `bash`, not `sh`** — they're bash scripts (`set -euo pipefail`,
+bash-specific idioms) and will fail or behave incorrectly under a POSIX `sh`:
+
+```bash
+bash scripts/check.sh                                   # preflight
+bash scripts/install.sh --dry-run --diff                # see the plan first
+bash scripts/install.sh                                  # real install (prints a backup-dir path — save it)
+bash scripts/merge-settings.sh --dry-run                # see the settings.json diff
+bash scripts/merge-settings.sh --apply --backup-dir <path>
+bash scripts/merge-claude-md.sh --dry-run               # see the CLAUDE.md diff
+bash scripts/merge-claude-md.sh --apply --backup-dir <path>
+```
+
+Thread the same `--backup-dir <path>` (captured from `install.sh`'s first
+`CCS-STATUS:backup-dir:<path>` line) into every later `--apply`/`--force` call,
+so the whole install shares one backup run dir and one receipt.
+
+## 8. Verify the install
+
+1. **Restart Claude Code** — hooks and skills load at session start, so a
+   fresh install/merge only takes effect after a restart.
+2. Run:
+
+   ```bash
+   bash scripts/check.sh --post
+   ```
+
+   to confirm the managed artifacts landed under your config dir.
+3. Run **`/hooks`** and confirm the managed hook entries appear.
+
+## 9. Updating
+
+```bash
+cd claude-code-setup   # your existing clone
+git pull
+```
+
+Then, **from inside the clone**, run `/setup` again. Any file you've
+customized since the last install surfaces as a per-category diff/prompt —
+it's **skipped by default** and only overwritten if you explicitly consent;
+nothing you've changed is clobbered silently.
+
+## 10. Uninstalling
+
+There's no uninstall script yet (deliberately deferred — see below); removal
+is manual but deterministic because every write is logged to a **receipt**.
+The receipt for a given install lives at `<backup-run-dir>/receipt.txt`, where
+`<backup-run-dir>` is a timestamped directory under
+`~/.claude/backups/claude-code-setup/<timestamp>/` (or under `$CLAUDE_CONFIG_DIR`
+if you've overridden it). Each line is tab-separated:
+`action  path  backup-path  repo-sha  timestamp`.
+
+Walk the receipt and act **per `action`**, in this order — the ordering
+matters because it's what protects data that predates the install:
+
+- **`installed`** — the file didn't exist before `/setup`; `rm` it.
+- **`overwritten`** — a file you already had was replaced; **restore it from
+  the backup path on that line** (do **not** `rm` it — `rm` would destroy the
+  original the backup exists specifically to preserve).
+- **`merged`** — if the backup-path field is non-empty, same as
+  `overwritten`: **restore from the backup path** on that line (never `rm`
+  it). If the backup-path field is **empty**, the file didn't exist before
+  `/setup` and was created fresh by the merge — `rm` it, same as `installed`.
+- **`unchanged`** — the file already matched what `/setup` would have
+  written, so nothing was touched; leave it alone. (Earlier runs' lines still
+  govern it if you ran `/setup` more than once.)
+- **`skipped`** — nothing was written; leave it alone.
+
+If you ran `/setup` more than once (e.g. across an update), restore from the
+**earliest** run's backups — that's the true pre-setup state; later runs'
+backups are snapshots of an already-modified file, not the original.
+
+## 11. Prerequisites
 
 - **jq** — REQUIRED. `protect-branches.sh` and `protect-secrets.sh` fail closed
   without it: they block the corresponding git operations/edits entirely rather
   than silently skip the check if `jq` isn't installed. `brew install jq` /
   `apt install jq`.
-- **gh** — the GitHub CLI, required for `/ship`'s PR creation.
-- **git** — obviously.
-- **Claude Code ≥ v2.1.132** — required for session-scoped sentinel isolation in
-  `orchestrator-delegate-guard.sh`; below this version the guard falls back to a
-  legacy global sentinel with only a TTL as backstop.
-- **Claude Code ≥ v2.1.198** — required for the custom `Explore` agent's model
-  override to take effect (below this version, the built-in Explore agent
-  inherits the session's main-thread model instead of running on `haiku`).
-- **context7 + exa MCP servers** — OPTIONAL. `skills/search/SKILL.md` falls back
-  to `WebSearch` for any angle where an MCP tool is unavailable; nothing breaks
-  without them, research just loses some precision (context7's version-pinned
-  docs, exa's semantic search).
+- **git** — obviously; also needed for `git identity` (`user.name` /
+  `user.email`) so the workflow's own commits (one per `/build` task, plus
+  `/ship`) have an author.
+- **Claude Code ≥ v2.1.53** — REQUIRED. This is a security floor
+  (CVE-2026-33068); `check.sh` fails closed below it.
+- **Claude Code ≥ v2.1.198** — RECOMMENDED, for the full feature set: the
+  custom `Explore` agent's model override (below this version it inherits the
+  session's main-thread model instead of running on `haiku`), and
+  session-scoped sentinel isolation in `orchestrator-delegate-guard.sh` (fully
+  available from ≥ v2.1.132; below that the guard falls back to a legacy
+  global sentinel with only a TTL as backstop).
+- **gh** — the GitHub CLI, needed **only for `/ship`'s** PR creation, not for
+  install. Run `gh auth login` before your first `/ship`.
+- **shellcheck + bats** — DEV-ONLY, for contributing to this repo's own
+  scripts/tests. Not required to adopt or run `/setup`.
+- **context7 + exa MCP servers** — OPTIONAL. `skills/search/SKILL.md` falls
+  back to `WebSearch` for any angle where an MCP tool is unavailable; `/design`
+  and `/search` degrade gracefully without them, just with less precision
+  (context7's version-pinned docs, exa's semantic search).
 
-## 8. What to adapt vs keep
+## 12. Troubleshooting
+
+- **`/setup` doesn't appear.** Confirm you accepted the folder's **trust**
+  dialog, and that you're running Claude Code from inside the clone (the skill
+  is repo-scoped, not installed globally). Then restart Claude Code once —
+  skill discovery has known upstream flakiness on a fresh trust grant
+  ([anthropics/claude-code#45956](https://github.com/anthropics/claude-code/issues/45956),
+  [anthropics/claude-code#43092](https://github.com/anthropics/claude-code/issues/43092)).
+  If it still doesn't appear, `bash scripts/check.sh` will surface targeted
+  fixes for common environment issues.
+- **`check.sh --post` shows a `FAIL:` line.** A managed artifact is missing
+  from your config dir — re-run `/setup` to install it.
+- **`check.sh --post` shows a `WARN: ... ignore if you declined this merge`.**
+  This is informational, not an error — it means you chose not to merge
+  `settings.json` or `CLAUDE.md`, and the check is just confirming that.
+- **A hook is blocking legitimate work.** See the `protect-secrets` note
+  below.
+
+**`protect-secrets` self-lockout note**: once installed, the `protect-secrets`
+hook blocks Claude Code itself from writing/editing files matching secret
+patterns (`.env`, `*credentials*`, `*.pem`, SSH/AWS/GCP key paths, etc.) — and
+it applies in **every** project you use Claude Code in afterward, not just this
+one, because it's wired into your global `~/.claude/settings.json`. If it
+blocks something you legitimately need to edit, that settings file is yours:
+edit or remove the hook entry directly. Re-running `/setup` later will offer
+to re-merge it, but it will never force the merge back in without your
+consent.
+
+**Plugin packaging (future work)**: a Claude Code plugin is a plausible future
+distribution mechanism for this setup. Today's clone-and-use + `/setup`
+approach was chosen deliberately instead — current plugin docs impose
+verbatim-file limits that don't fit this repo's merge-not-clobber model for
+`settings.json`/`CLAUDE.md`.
+
+**Backups accumulate**: backup run directories under
+`~/.claude/backups/claude-code-setup/` are never auto-deleted (there's no
+pruning script yet). They're cheap to keep and are what makes uninstall
+deterministic, but feel free to delete old ones by hand once you're confident
+you won't need to restore from them.
+
+## 13. What to adapt vs keep
 
 **Yours to replace**: the `Identity` and `Stack Preferences` blocks in
 `CLAUDE.md` (marked "example — replace with your own"), the generic example

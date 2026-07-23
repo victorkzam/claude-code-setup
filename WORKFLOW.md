@@ -6,6 +6,13 @@ Documentation for the `/design` -> `/build` -> `/ship` workflow. Installed at `~
 
 ## Quick Start
 
+**Install**: clone the repo, open Claude Code in it, then run `/setup` — the
+setup skill checks prerequisites, installs agents/skills/hooks/rules, and merges
+`settings.json`/`CLAUDE.md` with your existing config (dry-run + consent at each
+step; see the README's Quick Start section for the full flow).
+
+**Use**:
+
 ```
 /design <paste voice note transcript or feature description>
   -> iterates with research until you approve
@@ -35,7 +42,7 @@ Two human checkpoints: **after design** (you approve the plan), **before PR** (y
 | researcher | `sonnet` agent, read-only, web tools | `~/.claude/agents/researcher.md` |
 | implementer | `sonnet` default / `opus` per-call, writes code + atomic commit, no push | `~/.claude/agents/implementer.md` |
 | reviewer | `opus` agent, read-only, runs tests | `~/.claude/agents/reviewer.md` |
-| design-reviewer | `opus` agent, read-only, doc/codebase fidelity (loop ≤3) | `~/.claude/agents/design-reviewer.md` |
+| design-reviewer | `opus` agent, read-only, doc/codebase fidelity (loops until findings converge, escalates after 5) | `~/.claude/agents/design-reviewer.md` |
 | direction-reviewer | `opus` agent (effort xhigh), read-only, premise/direction (once) | `~/.claude/agents/direction-reviewer.md` |
 | Branch protection | Hook: blocks push *to* main/master + force push (by destination, not branch name) | `~/.claude/hooks/protect-branches.sh` |
 | Secrets protection | Hook: blocks edits to .env/keys/credentials/secrets (broadened) | `~/.claude/hooks/protect-secrets.sh` |
@@ -57,7 +64,7 @@ Two human checkpoints: **after design** (you approve the plan), **before PR** (y
    - Only structured summaries return to main context (~500-1K tokens each)
    - Raw research (10-50K tokens) stays in subagent context
 4. Synthesizes a design draft **and** `<slug>-tasks.md` (adaptive task count — 1 to many, never a fixed range; each task: disjoint files, assigned model, verification, one atomic Conventional commit)
-5. **design-reviewer** loop (≤3, fresh context each pass) for consistency/codebase-fit/best-practices, then **direction-reviewer** once (`opus`, premise/problem-fit)
+5. **design-reviewer** loop (fresh context each pass, continues until findings converge, escalates after 5 iterations) for consistency/codebase-fit/best-practices, then **direction-reviewer** once (`opus`, premise/problem-fit)
 6. **STOPS for your approval** — presents both verdicts + tasks path; this is the exit-plan-mode boundary
 
 **Iteration**: feedback regenerates the design *and* `<slug>-tasks.md`, re-runs the review loop + direction review, and stops again at a single checkpoint.
@@ -119,8 +126,10 @@ never lands process-rule edits inside the feature PR.
 | post-design checkpoint | — | **The exit-plan-mode boundary.** You approve, then leave plan mode |
 | `/build`, `/ship` | **execute** (default/acceptEdits) | `disable-model-invocation: true`; run explicitly after approval |
 
-`defaultMode` stays `"plan"` globally — the plan-first guarantee is preserved; the
-transition is driven by the checkpoint, not by weakening the default.
+The shipped template sets `defaultMode: "auto"` — a convenience key, deliberately
+withheld from merges into existing configs. The plan-first guarantee comes from
+`/design` running in plan mode and the post-design checkpoint being the exit-plan-mode
+boundary, not from a global `"plan"` default.
 
 ## Model Usage Map
 
@@ -170,7 +179,7 @@ top balanced level).
 - **Output**: PASS/NEEDS WORK verdict, issues list, test results, design adherence
 
 ### design-reviewer (`opus`)
-- **Purpose**: Pre-code fidelity review — consistency, codebase-fit, best-practices, research-ignored (the ≤3 loop)
+- **Purpose**: Pre-code fidelity review — consistency, codebase-fit, best-practices, research-ignored (loops until findings converge, escalates after 5 iterations)
 - **Tools**: Read, Glob, Grep, web/exa/context7; **Cannot**: Write, Edit
 - **Output**: Strict JSON verdict (PASS/NEEDS_WORK) + issues + suggested_fixes
 
@@ -193,7 +202,7 @@ All hooks are in `~/.claude/settings.json` and `~/.claude/hooks/`. They provide 
 | protect-secrets.sh | PreToolUse (Write\|Edit) | Blocks edits to .env/.envrc, credentials, secrets, keys (.pem/.key/.p8/.pfx/.jks/.keystore), id_rsa, .aws/.ssh/.gnupg, service-account/gcp json, Config.swift |
 | orchestrator-delegate-guard.sh | PreToolUse (Write\|Edit) | While `/build` active, blocks orchestrator (main-thread) source edits; **session-scoped** (`/tmp/claude-orchestrator-active.$SESSION_ID`) with TTL self-heal |
 | syntax-check.sh | PostToolUse (Write\|Edit) | Multi-language check (py/js/sh/json/swift), surfaces real errors; never blocks |
-| Notification | Notification event | macOS notification when Claude needs attention |
+| Notification | Notification event | macOS notification when Claude needs attention (macOS-only, uses `osascript`) |
 
 **How hooks work**:
 - `PreToolUse` hooks run BEFORE a tool executes. Exit 2 = blocked. Exit 0 = allowed.
@@ -257,7 +266,7 @@ These have ~70% compliance. For critical rules (branch protection, secrets), hoo
 
 ### Key frontmatter fields
 - **Skills**: `name`, `description`, `allowed-tools` (pre-approval), `disable-model-invocation`, `argument-hint`
-- **Agents**: `name`, `description`, `model`, `tools`, `disallowedTools`, `maxTurns`, `skills`, `mcpServers`, `memory`, `permissionMode`, `color` (named colors only)
+- **Agents**: `name`, `description`, `model`, `effort` (sets the subagent's reasoning effort tier), `tools`, `disallowedTools`, `maxTurns`, `skills`, `mcpServers`, `memory`, `permissionMode`, `color` (named colors only)
 
 ---
 

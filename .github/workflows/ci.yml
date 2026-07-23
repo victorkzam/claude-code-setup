@@ -1,0 +1,65 @@
+name: CI
+
+# push covers every branch (including feature branches, per project convention
+# of feature-branch-only work); pull_request targeting main covers PRs.
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: shellcheck + bats + manifest (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+
+      # Same pinned git-checkout install as the macos job below. `npm install -g
+      # bats` broke on the ubuntu-24.04 runner image: npm's global prefix is
+      # /usr/local, whose man dirs the runner user cannot mkdir (EACCES).
+      - name: Install bats-core from a git checkout
+        run: |
+          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
+          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
+
+      - name: shellcheck scripts + hooks
+        # -x: scripts/*.sh source scripts/lib.sh; a bare single-file shellcheck
+        # trips info-level SC1091 (can't follow non-constant/relative source).
+        # House convention: always lint with -x here.
+        #
+        # --severity=error: hooks/*.sh (owned by an earlier task, out of scope
+        # here) carry pre-existing info/warning-level nits (SC2086, SC2015,
+        # SC2221/2222) that are stylistic, not bugs. Gating on errors keeps this
+        # a real correctness gate without failing CI on unrelated existing
+        # style notes. Judgment call — revisit if those files get cleaned up.
+        run: shellcheck -x --severity=error scripts/*.sh hooks/*.sh
+
+      - name: bats (full suite, incl. e2e)
+        run: bats tests/*.bats
+
+      - name: manifest.txt == git ls-files agents/ hooks/ rules/ skills/ (C3)
+        run: |
+          diff <(git ls-files agents/ hooks/ rules/ skills/) scripts/manifest.txt
+
+  bats-macos:
+    name: bats (macos system /bin/bash 3.2 + BSD userland)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # bats-core from a git checkout, invoked directly out of bin/ — NOT via
+      # brew. A brewed bats would pull in a modern GNU-flavored PATH/toolchain
+      # and mask exactly the GNUisms this job exists to catch. shellcheck is
+      # intentionally skipped here: the ubuntu job already lints every script.
+      - name: Install bats-core from a git checkout
+        run: |
+          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
+          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
+
+      - name: bats (full suite, incl. e2e) under system bash
+        run: |
+          echo "bash: $(command -v bash) ($(bash --version | head -n1))"
+          bats tests/*.bats

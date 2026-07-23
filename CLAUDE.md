@@ -9,6 +9,7 @@ your own" are personal-preference blocks you should adapt or delete; the
 ## Identity (example — replace with your own)
 PM-turned-engineer. Quality and learning over speed. Always explain WHY behind architectural decisions, not just WHAT.
 
+<!-- BEGIN claude-code-setup workflow-rules v1 -->
 ## Workflow Rules
 - Never push directly to main/master. Feature branches only.
 - Conventional Commits: feat:, fix:, refactor:, docs:, chore:, test:
@@ -31,6 +32,7 @@ PM-turned-engineer. Quality and learning over speed. Always explain WHY behind a
 - Use subagents for tasks whose output would bloat the main context (exploration, review, large diffs).
 - Suggest /clear between unrelated tasks.
 - For large features: suggest one session per phase.
+<!-- END claude-code-setup workflow-rules v1 -->
 
 ## Stack Preferences (example — replace with your own; used only when a project's own CLAUDE.md is silent)
 - iOS: SwiftUI, async/await, no completion handlers, // MARK: sections
