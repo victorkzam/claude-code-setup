@@ -43,9 +43,12 @@ documented exception — it is model-invocable and writes its research/draft/tas
 artifact set to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plans/<slug>-*.md` (all writes
 confined there, matching the orchestrator-delegate-guard exemption). *Workflow judgment
 call — not officially blessed by plan mode, but bounded to the plans directory.* This part
-of the skill is unchanged by the hybrid model below. For meta-tooling designs (edits to
-this repo's own skills/hooks, where there is no separate project `docs/plans/` to promote
-into), the artifacts live and end here — an accepted limitation.
+of the skill is unchanged by the hybrid model below. For meta-tooling designs — where
+Step 6's routing rule resolves `$ROOT` equal to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` (the
+project being designed for IS the config repo itself, so there is no separate project
+`docs/plans/` to promote into) — the artifacts live and end here, same as the README's
+"Forking this workflow repo itself" section describes for that repo layout: an accepted
+limitation, not a bug.
 
 At the end of Step 5, `/design` calls `ExitPlanMode` itself — this is the explicit mode
 transition; there is no longer an implicit boundary to avoid crossing. **The user's
@@ -217,8 +220,16 @@ rule.
    If the gate passes, stamp each **plans-dir** source draft (not the project copies) with
    this as its first line:
    `> PROMOTED to $ROOT/docs/plans/<slug>/ — the project copy is canonical.`
-   If any write fails, or the gate does not pass: report the failure, leave the plans dir
-   as the canonical copy, and stamp nothing.
+   **A promoted project copy is all-or-nothing — present and complete, or absent.** If any
+   write fails, or the gate does not pass: report the failure, then remove the partial
+   project copy so no half-written set is left behind for `/build` to mistake for a
+   COMPLETE pair — `rm -rf "$ROOT/docs/plans/<slug>/"` **only when** `$ROOT` is non-empty
+   AND `<slug>` is non-empty AND `<slug>` matches `^[a-z0-9][a-z0-9-]*$` (reject any slug
+   containing `..`, `/`, spaces, or glob characters before running this destructive
+   command). This `rm` is a Bash command, not a `Write`/`Edit` — it is NOT confined by
+   `design-scope-guard.sh` (which only gates `Write`/`Edit`), so the charset check above is
+   the real safety mechanism here, not the hook. Leave the plans dir as the canonical copy
+   and stamp nothing.
 6. **No repo at all** (`ROOT` empty): ask the user whether to run `git init -b main && git
    commit --allow-empty -m "chore: initial commit"` so promotion has somewhere to land, or
    to stay in the plans dir for this design.

@@ -46,12 +46,20 @@ $ARGUMENTS
 1. **Resolve the tasks file** (`$ARGUMENTS`):
    - `ROOT=$(git rev-parse --show-toplevel 2>/dev/null)`.
    - explicit slug or path argument → check the **project copy first**:
-     `$ROOT/docs/plans/<slug>/<slug>-tasks.md`. This only counts if the pair is
-     **COMPLETE** — `<slug>-tasks.md` AND `<slug>-design-draft.md` both present and
-     non-empty. A partial pair (an interrupted `/design` Step 6 write — one file present,
-     the other missing or empty) is not usable: warn the user and fall back to the legacy
-     `~/.claude/plans/<slug>-tasks.md` (or the given path) instead. Never silently mix a
-     partial project copy with a plans-dir remainder.
+     `$ROOT/docs/plans/<slug>/<slug>-tasks.md`. `/design`'s Step 6.5 gate now guarantees
+     that a promoted project copy is **all-or-nothing** — present and complete, or absent
+     (on gate failure or any write failure, `/design` removes the partial copy itself) —
+     but `/build` cannot assume every project copy on disk was written by a version of
+     `/design` that had that cleanup, so it still re-verifies. This only counts if the set
+     is **COMPLETE** — `<slug>-tasks.md` AND `<slug>-design-draft.md` both present and
+     non-empty, AND at least one `<slug>-research-*.md` present in
+     `$ROOT/docs/plans/<slug>/`. `/build` can't re-check research *parity* (no plans-dir
+     reference count survives once its drafts are inert), but presence is cheap and closes
+     the crash window where core files were written but no research file was, and cleanup
+     never ran. A partial set (missing/empty core file, or zero research files present) is
+     not usable: warn the user and fall back to the legacy `~/.claude/plans/<slug>-tasks.md`
+     (or the given path) instead. Never silently mix a partial project copy with a
+     plans-dir remainder.
    - no argument → glob the **project location first**: `$ROOT/docs/plans/*/*-tasks.md`.
      If that glob has no matches, fall back to the **legacy plans dir**:
      `~/.claude/plans/*-tasks.md`. Pick the newest by mtime within whichever glob actually
