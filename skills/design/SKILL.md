@@ -11,6 +11,13 @@ allowed-tools:
   - Edit
   - Bash(git log:*)
   - Bash(git diff:*)
+  - Bash(touch /tmp/claude-design-active*)
+  - Bash(rm -f /tmp/claude-design-active*)
+  - Bash(git rev-parse:*)
+  - Bash(mkdir:*)
+  - Bash(git check-ignore:*)
+  - Bash(git init:*)
+  - Bash(git commit --allow-empty*)
 ---
 
 # Research-Grounded Design
@@ -20,20 +27,34 @@ You are helping the user design a feature. The cost model is **80/20 — spend t
 ## Input
 $ARGUMENTS
 
-Derive a short kebab-case `<slug>` from the feature (first 3–5 meaningful words). All artifacts go in `~/.claude/plans/`:
+Derive a short kebab-case `<slug>` from the feature (first 3–5 meaningful words). All plan-mode artifacts go in `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plans/`:
 - `<slug>-research-codebase.md`, `<slug>-research-docs.md`, `<slug>-research-bestpractices.md`
 - `<slug>-design-draft.md` (the design itself; the review loop reads this)
 - `<slug>-tasks.md` (the executable task breakdown `/build` consumes)
 
 ## Mode
 
-`/design` runs **in plan mode**. Plan mode normally restricts writes to a single plan
-file; `/design` is the documented exception — it is model-invocable and writes its
-`~/.claude/plans/<slug>-*.md` artifact set (all writes confined there, matching the
-orchestrator-delegate-guard exemption). *Workflow judgment call — not officially blessed
-by plan mode, but bounded to the plans directory.* The Step 5 Human Checkpoint is the
-**exit-plan-mode boundary**: do not exit plan mode before it. `/build` and `/ship` run
-afterward in execute mode.
+`/design` is a **hybrid**: Steps 0–5 (research, draft, review loop) run **in plan mode**,
+then a short guarded window in Step 6 runs in **execute mode** to write the approved
+artifact set into the project, and Step 7 is the single human checkpoint that follows.
+
+Plan mode normally restricts writes to a single plan file; the Steps 0–5 loop is the
+documented exception — it is model-invocable and writes its research/draft/task-breakdown
+artifact set to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plans/<slug>-*.md` (all writes
+confined there, matching the orchestrator-delegate-guard exemption). *Workflow judgment
+call — not officially blessed by plan mode, but bounded to the plans directory.* This part
+of the skill is unchanged by the hybrid model below. For meta-tooling designs (edits to
+this repo's own skills/hooks, where there is no separate project `docs/plans/` to promote
+into), the artifacts live and end here — an accepted limitation.
+
+At the end of Step 5, `/design` calls `ExitPlanMode` itself — this is the explicit mode
+transition; there is no longer an implicit boundary to avoid crossing. **The user's
+approval at that `ExitPlanMode` call is administrative, not the go/no-go decision** — it
+only ends drafting and lets the turn continue into execute mode for the Step 6 artifact
+write. The real accept/reject decision point remains `/build`. If the user rejects at
+`ExitPlanMode`, stay in plan mode and keep iterating per the Iteration Protocol below,
+exactly as before this change. If the user approves, the same turn continues straight into
+Step 6 — no new turn, no re-prompt.
 
 ## Step 0: Office-Hours Gate (before any research spend)
 
@@ -107,7 +128,7 @@ Schema per task:
 - model: sonnet | opus   # opus only if >5 files, long-horizon, or cross-cutting schema
 - risk: high | normal | trivial   # optional; feeds /build's tiered review depth (deep review for high, fast-path for trivial)
 - verification: exact command(s) + expected exit 0   # verification IS the acceptance contract (Proposal 4.2 acceptance: folded in deliberately) — this is what /build checks against ground truth, never narrative
-- commit: <type>(<scope>): <subject>           # ONE atomic Conventional Commit; the Co-Authored-By trailer is required
+- commit: <type>(<scope>): <subject> | none (unversioned/external target — verification-only gates)   # ONE atomic Conventional Commit; the Co-Authored-By trailer is required unless commit is `none`
 ```
 
 (Spec-driven best practice: Pimzino/claude-code-spec-workflow, gotalab/cc-sdd; one
@@ -140,26 +161,106 @@ Loop until convergence or the safety valve fires. Counter starts at 1.
 
 **Safety valve**: after 5 iterations without convergence, stop looping and escalate to the user with the full list of surviving (verified, unresolved) critical issues — do not silently finalize, and do not attempt a 6th iteration.
 
-## Step 5: Human Checkpoint
+## Step 5: Pre-Exit Summary + ExitPlanMode
 
 Present the final `<slug>-design-draft.md`, the Step 4 convergence result ([N] iterations
 run, `CONVERGED` with zero verified critical issues or `ESCALATED` after 5 iterations with
 the surviving verified critical issues listed, plus any unverified risks and accumulated
-minor notes), and the `<slug>-tasks.md` task count. **Print the tasks-file path and the
-exact next command verbatim** so they survive a `/clear` or a new session. Then STOP:
+minor notes), and the `<slug>-tasks.md` task count:
 
-> "Design + task plan ready. Review loop: [N] iteration(s) → [CONVERGED, zero verified critical issues / ESCALATED after 5 iterations, M surviving critical issues]. Minor notes: [count]. Unverified risks (logged, not acted on): [count]. Tasks: `~/.claude/plans/<slug>-tasks.md` ([K] tasks).
-> When ready: `/build <slug>` (or just `/build` and I'll confirm the most recent tasks file).
+> "Design + task plan ready. Review loop: [N] iteration(s) → [CONVERGED, zero verified
+> critical issues / ESCALATED after 5 iterations, M surviving critical issues]. Minor
+> notes: [count]. Unverified risks (logged, not acted on): [count]. Tasks: [K] tasks in
+> `<slug>-tasks.md`.
+> Approving here exits plan mode so I can write the artifact set into the project — it's
+> not the build decision, `/build` still is."
+
+Then call **`ExitPlanMode`**. This is the explicit mode transition described in Mode
+above.
+- If the user **rejects**, remain in plan mode and follow the pre-promotion path of the
+  Iteration Protocol below — unchanged from before this feature.
+- If the user **approves**, continue in the same turn into Step 6.
+
+## Step 6: Post-Approval Artifact Write (execute mode, same turn)
+
+Runs only after `ExitPlanMode` is approved. This is a short guarded window, not a general
+license to write anywhere — everything below is bounded by the sentinel and the routing
+rule.
+
+1. **Arm the sentinel**: `touch "/tmp/claude-design-active.$CLAUDE_CODE_SESSION_ID"` (this
+   is what `hooks/design-scope-guard.sh` checks for). If `$CLAUDE_CODE_SESSION_ID` is
+   empty, fall back to `touch /tmp/claude-design-active` and warn the user that session
+   isolation is inactive for this run.
+2. **Resolve the project root**: `ROOT=$(git rev-parse --show-toplevel 2>/dev/null)`.
+3. **Routing rule** — decide whether artifacts stay in the plans dir or promote into the
+   project:
+   - If `ROOT` equals `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` (this repo IS the config
+     repo — a meta-tooling design), OR `git -C "$ROOT" check-ignore -q docs/plans/probe`
+     reports that class of path as gitignored, the project doesn't want these files
+     tracked — **artifacts stay in the plans dir**, and the Step 7 checkpoint says so.
+     Always root-anchor the `check-ignore` probe (`git -C "$ROOT" check-ignore -q
+     docs/plans/probe`), never a cwd-relative one — a cwd-relative probe run from a
+     subdirectory can false-positive.
+   - Otherwise, promote: `mkdir -p "$ROOT/docs/plans/<slug>"`.
+4. **Write the artifact set** (promotion path only) **with the `Write` tool — never
+   `cp`** — so the write goes through the design-scope-guard and protect-secrets rails
+   like every other artifact write in this skill:
+   - The two core files: `<slug>-design-draft.md` and `<slug>-tasks.md`.
+   - Every `<slug>-research-*.md` file present in the plans dir (a bounded glob on the
+     exact slug prefix — `login-research-*` cannot cross-match `login-flow-research-*` —
+     so legitimate extra research variants are captured without over-matching a
+     similarly-named design).
+5. **Self-check gate**: only stamp promotion if BOTH hold —
+   - the two core files exist in `$ROOT/docs/plans/<slug>/` and are non-empty, AND
+   - the count of `<slug>-research-*.md` files written into the project equals the count
+     of `<slug>-research-*.md` source files in the plans dir.
+   If the gate passes, stamp each **plans-dir** source draft (not the project copies) with
+   this as its first line:
+   `> PROMOTED to $ROOT/docs/plans/<slug>/ — the project copy is canonical.`
+   If any write fails, or the gate does not pass: report the failure, leave the plans dir
+   as the canonical copy, and stamp nothing.
+6. **No repo at all** (`ROOT` empty): ask the user whether to run `git init -b main && git
+   commit --allow-empty -m "chore: initial commit"` so promotion has somewhere to land, or
+   to stay in the plans dir for this design.
+7. **Disarm the sentinel** before stopping: `rm -f "/tmp/claude-design-active.$CLAUDE_CODE_SESSION_ID"`
+   (or the unsuffixed fallback path if that's what was armed).
+
+## Step 7: Human Checkpoint (the one stop)
+
+This is the single STOP for the whole `/design` run — it comes after the write, not
+before it. Print the artifact directory path verbatim (`$ROOT/docs/plans/<slug>/` if
+promoted, otherwise the plans dir) and name the two files to open first:
+`<slug>-design-draft.md`, then `<slug>-tasks.md`. If `$ROOT` is under `$HOME/Documents/`,
+note that this location is phone-readable (e.g. via a synced Files app) — omit that note
+otherwise.
+
+> "Design + task plan written to `[path]`. Open `<slug>-design-draft.md` first, then
+> `<slug>-tasks.md`. Exiting plan mode above was provisional — `/build <slug>` is still
+> the real decision point. These files are untracked until `/build` commits them, so
+> avoid a bulk `git add .` in the meantime.
 > What would you like to adjust before I implement?"
 
-**This is the exit-plan-mode boundary.** Do not proceed to implementation and do not
-exit plan mode yourself — the user approves, exits plan mode, and runs `/build` (execute
-mode) when ready.
-
 ## Iteration Protocol (post-checkpoint human feedback)
-If the user gives feedback:
+
+Two paths, depending on which checkpoint the feedback arrives at:
+
+**Pre-promotion** (feedback given when the user rejects at the Step 5 `ExitPlanMode`
+call) — nothing has been written to the project yet, so iterate exactly as before this
+feature, entirely on the plans-dir copies:
 1. For feedback that introduces a new unknown, spawn a `researcher` and update the relevant research file.
 2. Revise `<slug>-design-draft.md`.
 3. **Regenerate `<slug>-tasks.md`** (Step 3b) so it never lags an edited draft.
 4. Re-run Step 4 (the convergence review loop, including its `direction-reviewer` pass) on the revised draft + tasks.
-5. Present and STOP again. A `REDIRECT` from the re-run is **folded into this single Step 5 checkpoint** (Step 4 already surfaces it as a flagged human decision) — it does not create a second, separate stop. The human sees exactly one checkpoint per iteration cycle, consistent with the two-checkpoint rule. Repeat until the user says to proceed.
+5. Return to Step 5 (present + `ExitPlanMode` again). A `REDIRECT` from the re-run is **folded into this single checkpoint** (Step 4 already surfaces it as a flagged human decision) — it does not create a second, separate stop. Repeat until the user approves at `ExitPlanMode`.
+
+**Post-promotion** (feedback given at the Step 7 checkpoint, after artifacts were written
+into the project) — ALL references re-point to the project copies: revisions, Step 3b
+regeneration, and the Step 4 re-review reviewer prompts all use
+`$ROOT/docs/plans/<slug>/<slug>-*.md` paths, never the plans dir. The plans-dir drafts are
+now inert bannered scratch (Step 6's `PROMOTED` stamp) — a re-review must never converge
+on them.
+1. Re-arm the sentinel for this revision turn (Step 6.1).
+2. Run steps 1–4 of the pre-promotion path above, but reading and writing
+   `$ROOT/docs/plans/<slug>/<slug>-*.md` instead of the plans dir.
+3. Present the revised checkpoint (Step 7) and STOP again; disarm the sentinel (Step 6.7)
+   before stopping. Repeat until the user says to proceed.
