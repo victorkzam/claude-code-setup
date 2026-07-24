@@ -4,6 +4,7 @@ agents/direction-reviewer.md
 agents/implementer.md
 agents/researcher.md
 agents/reviewer.md
+hooks/design-scope-guard.sh
 hooks/orchestrator-delegate-guard.sh
 hooks/protect-branches.sh
 hooks/protect-secrets.sh
