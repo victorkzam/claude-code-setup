@@ -9,11 +9,18 @@
 
 setup() {
   HOOK="${BATS_TEST_DIRNAME}/../hooks/orchestrator-delegate-guard.sh"
+  DESIGN_HOOK="${BATS_TEST_DIRNAME}/../hooks/design-scope-guard.sh"
 
   # Unique, throwaway session id/sentinel per test -- never the real global sentinel.
   SID="bats-guard-$$-${RANDOM}${RANDOM}"
   SENTINEL="/tmp/claude-orchestrator-active.${SID}"
   touch "$SENTINEL"
+
+  # design-scope-guard.sh sentinel -- distinct filename prefix from $SENTINEL above,
+  # so the two guards' sentinels never collide. NOT touched by default: tests that
+  # need /design "active" call design_sentinel_on() explicitly; tests that need it
+  # absent (the fast-path case) simply never call it. Always removed in teardown.
+  DESIGN_SENTINEL="/tmp/claude-design-active.${SID}"
 
   # Fake HOME/CLAUDE_CONFIG_DIR sandboxes MUST NOT live under /tmp: the hook's
   # own "/tmp/*" allowlist rule (line ~59) would then match any file path
@@ -39,7 +46,7 @@ setup() {
 }
 
 teardown() {
-  rm -f "$SENTINEL"
+  rm -f "$SENTINEL" "$DESIGN_SENTINEL"
   # Guard against an empty/unset SANDBOX_ROOT (e.g. setup aborted before it was
   # set) turning `rm -rf` into a no-op-on-cwd footgun.
   [ -n "${SANDBOX_ROOT:-}" ] && rm -rf "$SANDBOX_ROOT"
@@ -50,6 +57,19 @@ teardown() {
 # intentionally omitted -- absent means "main thread" per the hook's own comment.
 json_for() {
   printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$1"
+}
+
+# Turns the design-scope-guard sentinel "on" for the current test's session id.
+design_sentinel_on() {
+  touch "$DESIGN_SENTINEL"
+}
+
+# Same stdin shape as json_for(), plus tool_name -- design-scope-guard.sh does not
+# read tool_name at all (it only inspects tool_input.file_path), so a Write vs Edit
+# probe on the same file_path must produce identical exit codes. That parity is
+# what the "source-path probes" test below asserts.
+json_for_design() {
+  printf '{"session_id":"%s","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$2" "$1"
 }
 
 @test "plan-file edit under \$HOME/.claude/plans is allowed (default layout)" {
@@ -74,4 +94,58 @@ json_for() {
   run bash "$HOOK" <<< "$(json_for "/opt/some-project/src/main.py")"
   [ "$status" -eq 2 ]
   [[ "$output" == *"Blocked"* ]]
+}
+
+@test "delegate-guard: docs/plans/ write is allowed while sentinel is active" {
+  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/docs/plans/some-slug/draft.md")"
+  [ "$status" -eq 0 ]
+}
+
+@test "delegate-guard: .gitattributes write is allowed while sentinel is active" {
+  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/.gitattributes")"
+  [ "$status" -eq 0 ]
+}
+
+@test "delegate-guard: near-miss docs/plansX/ (not docs/plans/) is still blocked" {
+  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/docs/plansX/evil.md")"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Blocked"* ]]
+}
+
+# --- hooks/design-scope-guard.sh ---------------------------------------------
+# Same sandbox/sentinel-isolation conventions as above, applied to the sibling
+# guard: a per-test session id, a scratch sentinel file, and (per this file's
+# own note at setup()'s SANDBOX_ROOT check) fixture paths rooted outside /tmp
+# so the hook's own "/tmp/*" allowlist branch can't make an assertion vacuous.
+
+@test "design-scope-guard: docs/plans/ write under a project fixture is allowed while sentinel is active" {
+  design_sentinel_on
+  FIXTURE="$SANDBOX_ROOT/proj/docs/plans/some-slug/draft.md"
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
+  [ "$status" -eq 0 ]
+}
+
+@test "design-scope-guard: source-path probe is blocked identically for Write and Edit tool shapes" {
+  design_sentinel_on
+  FIXTURE="$SANDBOX_ROOT/proj/src/main.py"
+
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
+  [ "$status" -eq 2 ]
+  write_output="$output"
+
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Edit")"
+  [ "$status" -eq 2 ]
+
+  # Note: issue #37210 documents a harness-side runtime caveat around how the
+  # test harness replays Write vs Edit shapes -- it is not a defect in this
+  # hook. The hook itself never reads tool_name, so both shapes must agree.
+  [ "$output" = "$write_output" ]
+}
+
+@test "design-scope-guard: fast path allows any write when no design sentinel exists" {
+  # Deliberately do NOT call design_sentinel_on() -- exercises the jq-free
+  # `ls /tmp/claude-design-active*` fast path taken when /design isn't active.
+  FIXTURE="$SANDBOX_ROOT/proj/src/main.py"
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
+  [ "$status" -eq 0 ]
 }
