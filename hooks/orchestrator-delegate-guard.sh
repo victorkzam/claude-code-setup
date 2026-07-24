@@ -52,11 +52,12 @@ fi
 
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.filePath // empty')
 
-# The orchestrator may still touch its own plan/design drafts and scratch space.
-# When CLAUDE_CONFIG_DIR is set (adopters using a non-default config location),
-# its plans/ dir is editable too, alongside the default $HOME/.claude/plans/.
+# The orchestrator may still touch its own plan/design drafts, scratch space,
+# promoted docs/plans/, docs/research/, and .gitattributes. When CLAUDE_CONFIG_DIR
+# is set (adopters using a non-default config location), its plans/ dir is
+# editable too, alongside the default $HOME/.claude/plans/.
 case "$FILE" in
-  "$HOME"/.claude/plans/*|/tmp/*|"") exit 0 ;;
+  "$HOME"/.claude/plans/*|*/docs/plans/*|*/docs/research/*|*/.gitattributes|/tmp/*|"") exit 0 ;;
 esac
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   case "$FILE" in
@@ -64,5 +65,5 @@ if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   esac
 fi
 
-echo "Blocked: /build is active (session ${SID:-global}); the orchestrator must not edit source files directly. Spawn an implementer subagent for this change. Plan files under ~/.claude/plans/ (or \$CLAUDE_CONFIG_DIR/plans/ if set) remain editable." >&2
+echo "Blocked: /build is active (session ${SID:-global}); the orchestrator must not edit source files directly. Spawn an implementer subagent for this change. Plan files under ~/.claude/plans/ (or \$CLAUDE_CONFIG_DIR/plans/ if set), project docs/plans/, docs/research/, and .gitattributes remain editable." >&2
 exit 2
