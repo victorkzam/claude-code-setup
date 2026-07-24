@@ -5,6 +5,7 @@
 
 # Explicitly allow tracked template files and directories.
 !.gitignore
+!.gitattributes
 !README.md
 !LICENSE
 !CLAUDE.md
@@ -22,6 +23,8 @@
 !scripts/**
 !tests/
 !tests/**
+!docs/
+!docs/**
 !.github/
 !.github/**
 
@@ -40,7 +43,7 @@ settings.json
 settings.local.json
 .claude.json
 .mcp.json
-plans/
+/plans/
 projects/
 history.jsonl
 *.log
