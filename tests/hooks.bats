@@ -149,3 +149,77 @@ json_for_design() {
   run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
   [ "$status" -eq 0 ]
 }
+
+# --- hardening matrix: fail-closed on unparseable input, .. traversal, ------
+# relative/empty paths -- for BOTH guards. Existing allow-cases above must
+# still pass unchanged.
+
+# Builds the same stdin shape as json_for(), but with an explicit agent_type,
+# for the one subagent-exemption pin below. json_for()/json_for_design()
+# intentionally omit agent_type (absent == main thread).
+json_for_with_agent() {
+  printf '{"session_id":"%s","agent_type":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$1" "$2"
+}
+
+@test "delegate-guard: .. traversal via an allowlisted prefix is blocked" {
+  FIXTURE="$SANDBOX_ROOT/proj/docs/plans/../../../etc/evil"
+  run bash "$HOOK" <<< "$(json_for "$FIXTURE")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: relative file_path is blocked" {
+  run bash "$HOOK" <<< "$(json_for "docs/plans/x.md")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: empty file_path is blocked" {
+  run bash "$HOOK" <<< "$(json_for "")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: malformed JSON on stdin is blocked (parse gate)" {
+  run bash "$HOOK" <<< "$(printf 'not-json{{{')"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: /tmp/../etc/passwd is blocked (.. check precedes /tmp/* allow arm)" {
+  run bash "$HOOK" <<< "$(json_for "/tmp/../etc/passwd")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: subagent with a .. path is exempt (main-thread-only scope)" {
+  FIXTURE="$SANDBOX_ROOT/proj/docs/plans/../../../etc/evil"
+  run bash "$HOOK" <<< "$(json_for_with_agent "implementer" "$FIXTURE")"
+  [ "$status" -eq 0 ]
+}
+
+@test "design-scope-guard: .. traversal via an allowlisted prefix is blocked" {
+  design_sentinel_on
+  FIXTURE="$SANDBOX_ROOT/proj/docs/plans/../../../etc/evil"
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: relative file_path is blocked" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "docs/plans/x.md" "Write")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: empty file_path is blocked" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "" "Write")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: malformed JSON on stdin is blocked (parse gate)" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(printf 'not-json{{{')"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: /tmp/../etc/passwd is blocked (.. check precedes /tmp/* allow arm)" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "/tmp/../etc/passwd" "Write")"
+  [ "$status" -eq 2 ]
+}

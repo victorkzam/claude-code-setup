@@ -9,6 +9,19 @@
 # and reaped, then the edit is allowed. /build re-touches its sentinel at the start of
 # every task, so only a stalled/killed run trips this. Heuristic for tuning:
 # max(expected_task_count * 10, 45), capped at 120. This is the single adjustment point.
+#
+# Residual limits (honest disclosure, not exhaustive):
+#  (a) this hook fires on PreToolUse(Write|Edit) only -- it does not intercept
+#      Bash, so `cp`/shell redirection/`ln -s` can still write outside the
+#      allowlist during the guarded window.
+#  (b) the require-absolute-path check below is defense-in-depth best practice,
+#      not a schema-guaranteed invariant of tool_input.file_path.
+#  (c) the checks below sit after the agent_type != main exemption, so this
+#      hardening is main-thread-only by design -- delegated subagent edits
+#      remain exempt.
+#  (d) matching is lexical (string prefix/glob) only, with no symlink
+#      resolution -- a symlink placed inside an allowlisted dir that points
+#      outside it defeats the allowlist; out of scope for a Write|Edit hook.
 TTL_MINUTES=90
 
 INPUT=$(cat)
@@ -24,6 +37,12 @@ fi
 # agent_type / file_path from stdin. Fail closed rather than silently allowing
 # an edit the guard can no longer evaluate.
 command -v jq >/dev/null 2>&1 || { echo "jq required for this hook — install jq or remove it from settings.json" >&2; exit 2; }
+
+# Malformed JSON yields an empty session_id below, which collapses the sentinel
+# path to the unsuffixed legacy path; if nothing is there the sentinel loop
+# finds nothing and the hook would exit 0 at the sentinel stage BEFORE any
+# file_path check ever runs. Reject unparseable input here instead (fail closed).
+echo "$INPUT" | jq empty 2>/dev/null || { echo "orchestrator-delegate-guard — unparseable hook input, refusing (fail closed)" >&2; exit 2; }
 
 SID=$(echo "$INPUT" | jq -r '.session_id // empty')
 SENTINEL="/tmp/claude-orchestrator-active${SID:+.$SID}"
@@ -52,12 +71,21 @@ fi
 
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.filePath // empty')
 
+[ -z "$FILE" ] && { echo "orchestrator-delegate-guard — empty file_path, refusing (fail closed)" >&2; exit 2; }
+case "$FILE" in
+  ../*|*/../*|*/..|..) echo "orchestrator-delegate-guard — path traversal (..) refused" >&2; exit 2 ;;
+esac
+case "$FILE" in
+  /*) ;;
+  *) echo "orchestrator-delegate-guard — non-absolute path refused" >&2; exit 2 ;;
+esac
+
 # The orchestrator may still touch its own plan/design drafts, scratch space,
 # promoted docs/plans/, docs/research/, and .gitattributes. When CLAUDE_CONFIG_DIR
 # is set (adopters using a non-default config location), its plans/ dir is
 # editable too, alongside the default $HOME/.claude/plans/.
 case "$FILE" in
-  "$HOME"/.claude/plans/*|*/docs/plans/*|*/docs/research/*|*/.gitattributes|/tmp/*|"") exit 0 ;;
+  "$HOME"/.claude/plans/*|*/docs/plans/*|*/docs/research/*|*/.gitattributes|/tmp/*) exit 0 ;;
 esac
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   case "$FILE" in
