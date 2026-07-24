@@ -56,7 +56,7 @@ _populate_at() {
 
 _populate_claude_dir() { _populate_at "$CLAUDE_CONFIG_DIR"; }
 
-# _write_settings_with_hooks <path_prefix> — settings.json whose four hook
+# _write_settings_with_hooks <path_prefix> — settings.json whose five hook
 # commands embed <path_prefix>/<hook>.sh (filename match is what --post checks).
 _write_settings_with_hooks() {
   local prefix="$1"
@@ -67,7 +67,8 @@ _write_settings_with_hooks() {
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "bash \"$prefix/protect-branches.sh\"" } ] },
       { "matcher": "Write|Edit", "hooks": [
         { "type": "command", "command": "bash \"$prefix/protect-secrets.sh\"" },
-        { "type": "command", "command": "bash \"$prefix/orchestrator-delegate-guard.sh\"" } ] }
+        { "type": "command", "command": "bash \"$prefix/orchestrator-delegate-guard.sh\"" },
+        { "type": "command", "command": "bash \"$prefix/design-scope-guard.sh\"" } ] }
     ],
     "PostToolUse": [
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "bash \"$prefix/syntax-check.sh\"" } ] }

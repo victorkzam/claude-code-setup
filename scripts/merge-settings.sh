@@ -14,11 +14,12 @@
 # TOKEN-ANCHORED matching: the command string is split on whitespace, each token is
 # stripped of surrounding quotes, and the entry is MANAGED only if some token's
 # basename is EXACTLY a manifest-listed hook FILENAME (protect-branches.sh,
-# protect-secrets.sh, orchestrator-delegate-guard.sh, syntax-check.sh — derived
-# from manifest.txt). This matches both the config-dir-aware and old `~/.claude`
-# invocation forms while never misreading a filename mentioned only in echo/log
-# text. Managed entries are REPLACED by the template's current entry for that
-# filename (landing command-string upgrades WITHOUT duplication). Hook entries
+# protect-secrets.sh, orchestrator-delegate-guard.sh, design-scope-guard.sh,
+# syntax-check.sh — derived from manifest.txt). This matches both the
+# config-dir-aware and old `~/.claude` invocation forms while never misreading
+# a filename mentioned only in echo/log text. Managed entries are REPLACED by
+# the template's current entry for that filename (landing command-string
+# upgrades WITHOUT duplication). Hook entries
 # referencing NO manifest filename are FOREIGN and preserved verbatim. Template
 # hook entries not already present are added. `.permissions.allow` is a concat +
 # ORDER-PRESERVING dedup (first occurrence wins; adopter entries are never dropped
