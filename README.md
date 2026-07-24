@@ -39,6 +39,9 @@ would cost 50K+ and degrade quality as the window fills.
       the approved artifacts into docs/plans/<slug>/; you approve there, after
       the write — /build is still the real go/no-go)
 /build [<slug>]                 → implement via subagents, one atomic commit per task
+                                   (plus a `docs(<slug>):` artifacts commit, not
+                                   necessarily leading, when a project design copy
+                                   was promoted)
    ↓  (checkpoint 2 — you approve the commit series)
 /ship                           → verify commits, quality gate, push, open PR
    ↓  (offered, optional)
@@ -344,11 +347,12 @@ git repo:
 
 - **Gitignored `docs/`** — if `docs/` (or specifically `docs/plans/`) is
   gitignored in your project, the promotion write in `/design`'s guarded
-  window and `/build`'s leading `docs(<slug>): add design + research
-  artifacts` commit both skip, explicitly and by design — artifacts stay in
-  the plans dir (`~/.claude/plans/`, or `$CLAUDE_CONFIG_DIR/plans/` if you've
-  overridden it) as the canonical copy, exactly how `/design` behaved before
-  this feature.
+  window and `/build`'s `docs(<slug>): add design + research artifacts`
+  commit (not necessarily the leading commit in the series) both skip,
+  explicitly and by design — artifacts stay in the plans dir
+  (`~/.claude/plans/`, or `$CLAUDE_CONFIG_DIR/plans/` if you've overridden
+  it) as the canonical copy, exactly how `/design` behaved before this
+  feature.
 - **A published `docs/` site** (Docusaurus, mkdocs, GitHub Pages, etc.) — if
   your project already builds `docs/` into a live site, promoting WIP planning
   artifacts into `docs/plans/<slug>/` would land them inside that published
