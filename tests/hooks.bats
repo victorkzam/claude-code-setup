@@ -41,6 +41,17 @@ setup() {
   TEST_CONFIG_DIR="${SANDBOX_ROOT}/config"
   mkdir -p "$TEST_HOME/.claude/plans" "$TEST_CONFIG_DIR/plans"
 
+  # Git-backed fixture project. The guards anchor their project-relative
+  # allowances to `git -C "$cwd" rev-parse --show-toplevel` (cwd from the hook
+  # payload), so a real repo here makes ROOT resolve deterministically to $PROJ
+  # -- exercising the production git path -- instead of depending on whether the
+  # sandbox's parent happens to be a repo. OTHER is an out-of-project tree used
+  # for the anchoring-bypass assertions; it is never the session cwd.
+  PROJ="${SANDBOX_ROOT}/proj"
+  OTHER="${SANDBOX_ROOT}/other-repo"
+  mkdir -p "$PROJ" "$OTHER"
+  git -C "$PROJ" init -q
+
   export HOME="$TEST_HOME"
   unset CLAUDE_CONFIG_DIR
 }
@@ -53,10 +64,13 @@ teardown() {
 }
 
 # Builds the PreToolUse(Write|Edit) stdin JSON shape the hook reads: session_id
-# (sentinel lookup) and tool_input.file_path (allowlist check). agent_type is
-# intentionally omitted -- absent means "main thread" per the hook's own comment.
+# (sentinel lookup), cwd (project-root anchoring), and tool_input.file_path
+# (allowlist check). agent_type is intentionally omitted -- absent means "main
+# thread" per the hook's own comment. Optional arg 2 is the session cwd; when
+# omitted the cwd field is empty, which is exactly the fail-closed case the
+# guard treats as "no project root" (project-relative arms match nothing).
 json_for() {
-  printf '{"session_id":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$1"
+  printf '{"session_id":"%s","cwd":"%s","tool_input":{"file_path":"%s"}}' "$SID" "${2:-}" "$1"
 }
 
 # Turns the design-scope-guard sentinel "on" for the current test's session id.
@@ -67,9 +81,10 @@ design_sentinel_on() {
 # Same stdin shape as json_for(), plus tool_name -- design-scope-guard.sh does not
 # read tool_name at all (it only inspects tool_input.file_path), so a Write vs Edit
 # probe on the same file_path must produce identical exit codes. That parity is
-# what the "source-path probes" test below asserts.
+# what the "source-path probes" test below asserts. Optional arg 3 is the session
+# cwd (project-root anchoring); omitted => empty cwd => fail-closed "no root".
 json_for_design() {
-  printf '{"session_id":"%s","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$SID" "$2" "$1"
+  printf '{"session_id":"%s","cwd":"%s","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$SID" "${3:-}" "$2" "$1"
 }
 
 @test "plan-file edit under \$HOME/.claude/plans is allowed (default layout)" {
@@ -96,18 +111,20 @@ json_for_design() {
   [[ "$output" == *"Blocked"* ]]
 }
 
+# Intent unchanged (in-project artifact writes stay allowed); now anchored --
+# the path lives under the session project ($PROJ) supplied as cwd.
 @test "delegate-guard: docs/plans/ write is allowed while sentinel is active" {
-  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/docs/plans/some-slug/draft.md")"
+  run bash "$HOOK" <<< "$(json_for "$PROJ/docs/plans/some-slug/draft.md" "$PROJ")"
   [ "$status" -eq 0 ]
 }
 
 @test "delegate-guard: .gitattributes write is allowed while sentinel is active" {
-  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/.gitattributes")"
+  run bash "$HOOK" <<< "$(json_for "$PROJ/.gitattributes" "$PROJ")"
   [ "$status" -eq 0 ]
 }
 
 @test "delegate-guard: near-miss docs/plansX/ (not docs/plans/) is still blocked" {
-  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/proj/docs/plansX/evil.md")"
+  run bash "$HOOK" <<< "$(json_for "$PROJ/docs/plansX/evil.md" "$PROJ")"
   [ "$status" -eq 2 ]
   [[ "$output" == *"Blocked"* ]]
 }
@@ -120,8 +137,8 @@ json_for_design() {
 
 @test "design-scope-guard: docs/plans/ write under a project fixture is allowed while sentinel is active" {
   design_sentinel_on
-  FIXTURE="$SANDBOX_ROOT/proj/docs/plans/some-slug/draft.md"
-  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write")"
+  FIXTURE="$PROJ/docs/plans/some-slug/draft.md"
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$FIXTURE" "Write" "$PROJ")"
   [ "$status" -eq 0 ]
 }
 
@@ -222,4 +239,91 @@ json_for_with_agent() {
   design_sentinel_on
   run bash "$DESIGN_HOOK" <<< "$(json_for_design "/tmp/../etc/passwd" "Write")"
   [ "$status" -eq 2 ]
+}
+
+# --- project-root anchoring matrix (both guards) ------------------------------
+# The project-relative allowances (docs/plans/, docs/research/, .gitattributes)
+# must bind to the session project root (git toplevel of the payload cwd), not
+# match those path shapes anywhere on disk. cwd is always the git-backed $PROJ
+# fixture; $OTHER is a sibling out-of-project tree.
+
+@test "delegate-guard: out-of-project docs/plans/ is denied even though the shape matches" {
+  run bash "$HOOK" <<< "$(json_for "$OTHER/docs/plans/x/design.md" "$PROJ")"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Blocked"* ]]
+}
+
+@test "delegate-guard: out-of-project docs/research/ is denied even though the shape matches" {
+  run bash "$HOOK" <<< "$(json_for "$OTHER/docs/research/x.md" "$PROJ")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: out-of-project (\$HOME) .gitattributes is denied" {
+  run bash "$HOOK" <<< "$(json_for "$HOME/.gitattributes" "$PROJ")"
+  [ "$status" -eq 2 ]
+}
+
+@test "delegate-guard: in-project docs/research/ under the session cwd is allowed" {
+  run bash "$HOOK" <<< "$(json_for "$PROJ/docs/research/x.md" "$PROJ")"
+  [ "$status" -eq 0 ]
+}
+
+@test "delegate-guard: in-project root .gitattributes under the session cwd is allowed" {
+  run bash "$HOOK" <<< "$(json_for "$PROJ/.gitattributes" "$PROJ")"
+  [ "$status" -eq 0 ]
+}
+
+@test "delegate-guard: empty cwd denies a project-relative path (fail closed) but still allows plans dir and /tmp" {
+  run bash "$HOOK" <<< "$(json_for "$PROJ/docs/plans/x/design.md")"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Blocked"* ]]
+
+  run bash "$HOOK" <<< "$(json_for "$TEST_HOME/.claude/plans/adopter-setup-tasks.md")"
+  [ "$status" -eq 0 ]
+
+  run bash "$HOOK" <<< "$(json_for "/tmp/anything.md")"
+  [ "$status" -eq 0 ]
+}
+
+@test "design-scope-guard: out-of-project docs/plans/ is denied even though the shape matches" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$OTHER/docs/plans/x/design.md" "Write" "$PROJ")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: out-of-project docs/research/ is denied even though the shape matches" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$OTHER/docs/research/x.md" "Write" "$PROJ")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: out-of-project (\$HOME) .gitattributes is denied" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$HOME/.gitattributes" "Write" "$PROJ")"
+  [ "$status" -eq 2 ]
+}
+
+@test "design-scope-guard: in-project docs/research/ under the session cwd is allowed" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$PROJ/docs/research/x.md" "Write" "$PROJ")"
+  [ "$status" -eq 0 ]
+}
+
+@test "design-scope-guard: in-project root .gitattributes under the session cwd is allowed" {
+  design_sentinel_on
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$PROJ/.gitattributes" "Write" "$PROJ")"
+  [ "$status" -eq 0 ]
+}
+
+@test "design-scope-guard: empty cwd denies a project-relative path (fail closed) but still allows plans dir and /tmp" {
+  design_sentinel_on
+
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$PROJ/docs/plans/x/design.md" "Write")"
+  [ "$status" -eq 2 ]
+
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "$TEST_HOME/.claude/plans/adopter-setup-tasks.md" "Write")"
+  [ "$status" -eq 0 ]
+
+  run bash "$DESIGN_HOOK" <<< "$(json_for_design "/tmp/anything.md" "Write")"
+  [ "$status" -eq 0 ]
 }

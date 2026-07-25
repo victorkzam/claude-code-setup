@@ -21,6 +21,11 @@
 #  (d) matching is lexical (string prefix/glob) only, with no symlink
 #      resolution -- a symlink placed inside an allowlisted dir that points
 #      outside it defeats the allowlist; out of scope for a Write|Edit hook.
+#  (e) the project-relative allowances are anchored to the session project root
+#      derived from the payload cwd. cwd follows `cd` within the session, so
+#      this binds to the session's *current* project -- a real narrowing (an
+#      unrelated repo's docs/plans/ no longer matches), not cryptographic
+#      confinement.
 TTL_MINUTES=120
 
 INPUT=$(cat)
@@ -79,12 +84,38 @@ case "$FILE" in
   *) echo "design-scope-guard — non-absolute path refused" >&2; exit 2 ;;
 esac
 
-# /design may write plan and research artifacts, and .gitattributes (used to mark
-# generated files). When CLAUDE_CONFIG_DIR is set (adopters using a non-default
-# config location), its plans/ dir is editable too, alongside the default
-# $HOME/.claude/plans/.
+# Anchor the project-relative allowances to THIS session's project root, so the
+# docs/plans/, docs/research/, and .gitattributes shapes cannot match an
+# unrelated repo elsewhere on disk. Derive the root from the payload cwd: git
+# toplevel when cwd is inside a repo, else cwd itself (bats fixtures aren't
+# repos). Sanitize first -- an empty, non-absolute, or ..-containing cwd yields
+# an empty ROOT, and the project-relative arm below is skipped entirely (fail
+# closed for that branch only) rather than collapsing "$ROOT"/... to a bare
+# /... glob.
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+ROOT=""
+case "$CWD" in
+  ""|../*|*/../*|*/..|..) ;;
+  /*) ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null); [ -n "$ROOT" ] || ROOT="$CWD" ;;
+esac
+
+# /design may write plan and research artifacts, and the project-root
+# .gitattributes (skills/build writes only "$ROOT/.gitattributes" -- the
+# docs/plans/** linguist-generated marker -- so only the root file is allowed,
+# never */.gitattributes anywhere). These arms are root-anchored literal
+# prefixes, never bare */... globs (which this repo has repeatedly regressed
+# into an unanchored allowlist bypass).
+if [ -n "$ROOT" ]; then
+  case "$FILE" in
+    "$ROOT"/docs/plans/*|"$ROOT"/docs/research/*|"$ROOT"/.gitattributes) exit 0 ;;
+  esac
+fi
+
+# Config-dir and scratch allowances are not project-scoped and stay as-is. When
+# CLAUDE_CONFIG_DIR is set (adopters using a non-default config location), its
+# plans/ dir is editable too, alongside the default $HOME/.claude/plans/.
 case "$FILE" in
-  */docs/plans/*|*/docs/research/*|*/.gitattributes|"$HOME"/.claude/plans/*|/tmp/*) exit 0 ;;
+  "$HOME"/.claude/plans/*|/tmp/*) exit 0 ;;
 esac
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   case "$FILE" in
@@ -92,5 +123,5 @@ if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   esac
 fi
 
-echo "/design is active — writes are confined to the design artifact paths (docs/plans/, docs/research/, plans dir)" >&2
+echo "/design is active — writes are confined to this project's design artifact paths (${ROOT:-<no project root>}/docs/plans/, docs/research/, .gitattributes) plus the plans dir; paths outside the session project are refused" >&2
 exit 2
