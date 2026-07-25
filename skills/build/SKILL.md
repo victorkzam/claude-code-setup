@@ -75,7 +75,9 @@ $ARGUMENTS
    the untracked `docs/plans/<slug>/` artifacts into the stash, so step 4 below would see
    no delta and silently skip the docs commit.
 3. Create feature branch from main: `feat/<slug>` or `fix/<slug>`.
-4. **Commit the design artifacts as the leading docs commit** — gated: this step only
+4. **Commit the design artifacts as a scoped `docs(<slug>):` commit** — typically the first
+   commit on a fresh Phase 0 branch, but not guaranteed to stay leading (a refresh committed
+   later on `continue` can land after task commits) — gated: this step only
    runs when step 1 resolved a **COMPLETE project copy** at `$ROOT/docs/plans/<slug>/` in
    THIS repo. A plans-dir-resolved build (the normal meta-tooling case, where there is no
    project copy to promote) **skips this whole step with a notice** — `git add` on a

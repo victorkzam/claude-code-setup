@@ -64,7 +64,7 @@ Two human checkpoints: **after design** (you approve the plan), **before PR** (y
 3. Spawns grounding subagents in parallel: `Explore` (codebase map, **`haiku`** — fan-out navigation) + two `researcher` (`sonnet`, 3-angle methodology)
    - Only structured summaries return to main context (~500-1K tokens each)
    - Raw research (10-50K tokens) stays in subagent context
-4. Synthesizes a design draft **and** `<slug>-tasks.md` (adaptive task count — 1 to many, never a fixed range; each task: disjoint files, assigned model, verification, one atomic Conventional commit)
+4. Synthesizes a design draft **and** `<slug>-tasks.md` (adaptive task count — 1 to many, never a fixed range; each task: disjoint files, assigned model, verification, one atomic Conventional commit — or `commit: none` for unversioned/external targets, verification-only)
 5. **design-reviewer** loop (fresh context each pass, continues until findings converge, escalates after 5 iterations) for consistency/codebase-fit/best-practices, then **direction-reviewer** once (`opus`, premise/problem-fit)
 6. `/design` calls **`ExitPlanMode` itself** — provisional and skill-invoked, not the real go/no-go; approving here only continues the same turn into the guarded write below (rejecting stays in plan mode and re-runs the loop)
 7. **Guarded promotion write** (execute mode, same turn; session-scoped sentinel via `design-scope-guard.sh`) — writes the approved artifact set into `$ROOT/docs/plans/<slug>/`, unless `$ROOT` is the config repo itself or `docs/plans/` is gitignored there, in which case artifacts stay in the plans dir
@@ -81,7 +81,7 @@ Two human checkpoints: **after design** (you approve the plan), **before PR** (y
 **How it works**:
 1. **Pre-flight**: Resolves the tasks file — project copy first (`$ROOT/docs/plans/<slug>/<slug>-tasks.md`), falling back to the legacy `~/.claude/plans/` (arg / newest-by-mtime-with-confirm) — creates feature branch, commits a promoted project design copy as a `docs(<slug>): add design + research artifacts` commit, then writes the session-scoped sentinel
 2. **Consume tasks**: Executes exactly the tasks `<slug>-tasks.md` defines — adaptive count (1 to many), in `depends_on` order, independent ones in parallel
-3. **Implement**: Spawns a context-pinned **implementer** per task (only its task entry + relevant excerpt); the implementer makes **one atomic Conventional commit per task** (co-author trailer; no push)
+3. **Implement**: Spawns a context-pinned **implementer** per task (only its task entry + relevant excerpt); the implementer makes **one atomic Conventional commit per task** (co-author trailer; no push) — except `commit: none` tasks (unversioned/external targets), which are verification-only
 4. **Review**: Spawns **reviewer** subagent that reads files FRESH from disk and checks commit atomicity (no implementer bias)
 5. **Iterate**: If reviewer finds issues:
    - Iteration 1-2: Spawns NEW implementer with reviewer's feedback
@@ -176,7 +176,7 @@ top balanced level).
 - **Output**: Structured findings with URLs, confidence levels, consensus, gaps
 
 ### implementer (`sonnet` default / `opus` per-call)
-- **Purpose**: Implement one task; make exactly one atomic Conventional commit for it
+- **Purpose**: Implement one task; make exactly one atomic Conventional commit for it — or, for `commit: none` tasks (unversioned/external targets), verification-only with no commit
 - **Model**: `sonnet`; the design assigns `opus` per-call for >5-file / long-horizon / cross-cutting tasks
 - **Tools**: Read, Write, Edit, Glob, Grep, Bash, context7
 - **Cannot**: `git push`, `gh pr create`, checkout main (commits ARE allowed and required)
