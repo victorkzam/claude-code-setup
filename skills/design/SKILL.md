@@ -16,6 +16,7 @@ allowed-tools:
   - Bash(git rev-parse:*)
   - Bash(mkdir:*)
   - Bash(git check-ignore:*)
+  - Bash(git clean:*)  # Step 6 all-or-nothing cleanup of an untracked partial docs/plans/<slug> copy; narrower than Bash(rm -rf:*) since git clean cannot touch tracked files
   - Bash(git init:*)
   - Bash(git commit --allow-empty*)
 ---
@@ -198,12 +199,15 @@ rule.
 3. **Routing rule** — decide whether artifacts stay in the plans dir or promote into the
    project:
    - If `ROOT` equals `${CLAUDE_CONFIG_DIR:-$HOME/.claude}` (this repo IS the config
-     repo — a meta-tooling design), OR `git -C "$ROOT" check-ignore -q docs/plans/probe`
+     repo — a meta-tooling design), OR `git check-ignore -q "$ROOT/docs/plans/probe"`
      reports that class of path as gitignored, the project doesn't want these files
      tracked — **artifacts stay in the plans dir**, and the Step 7 checkpoint says so.
-     Always root-anchor the `check-ignore` probe (`git -C "$ROOT" check-ignore -q
-     docs/plans/probe`), never a cwd-relative one — a cwd-relative probe run from a
-     subdirectory can false-positive.
+     Always root-anchor the `check-ignore` probe with an absolute path (`git check-ignore
+     -q "$ROOT/docs/plans/probe"`), never a bare cwd-relative one — a cwd-relative probe
+     run from a subdirectory can false-positive. `/design`'s cwd is always inside the repo
+     (`$ROOT` comes from `git rev-parse --show-toplevel`), so the absolute-path form is
+     equivalent to a `-C "$ROOT"` form while also matching the `Bash(git check-ignore:*)`
+     grant, which is a literal prefix match and would not cover a leading `-C` flag.
    - Otherwise, promote: `mkdir -p "$ROOT/docs/plans/<slug>"`.
 4. **Write the artifact set** (promotion path only) **with the `Write` tool — never
    `cp`** — so the write goes through the design-scope-guard and protect-secrets rails
@@ -223,13 +227,17 @@ rule.
    **A promoted project copy is all-or-nothing — present and complete, or absent.** If any
    write fails, or the gate does not pass: report the failure, then remove the partial
    project copy so no half-written set is left behind for `/build` to mistake for a
-   COMPLETE pair — `rm -rf "$ROOT/docs/plans/<slug>/"` **only when** `$ROOT` is non-empty
-   AND `<slug>` is non-empty AND `<slug>` matches `^[a-z0-9][a-z0-9-]*$` (reject any slug
-   containing `..`, `/`, spaces, or glob characters before running this destructive
-   command). This `rm` is a Bash command, not a `Write`/`Edit` — it is NOT confined by
-   `design-scope-guard.sh` (which only gates `Write`/`Edit`), so the charset check above is
-   the real safety mechanism here, not the hook. Leave the plans dir as the canonical copy
-   and stamp nothing.
+   COMPLETE pair — `git clean -fd "$ROOT/docs/plans/<slug>"` **only when** `$ROOT` is
+   non-empty AND `<slug>` is non-empty AND `<slug>` matches `^[a-z0-9][a-z0-9-]*$` (reject
+   any slug containing `..`, `/`, spaces, or glob characters before running this
+   destructive command). `git clean -fd`, not `rm -rf`: the partial copy is untracked at
+   design time (`/build` is what commits it later), so `git clean` removes exactly the
+   untracked partial copy and, by construction, cannot delete a tracked file — a narrower
+   guarantee than `rm -rf` gives, at the cost of a `Bash(git clean:*)` grant instead of
+   widening to `Bash(rm -rf:*)`. This `git clean` is a Bash command, not a `Write`/`Edit` —
+   it is NOT confined by `design-scope-guard.sh` (which only gates `Write`/`Edit`), so the
+   charset check above is the real safety mechanism here, not the hook. Leave the plans dir
+   as the canonical copy and stamp nothing.
 6. **No repo at all** (`ROOT` empty): ask the user whether to run `git init -b main && git
    commit --allow-empty -m "chore: initial commit"` so promotion has somewhere to land, or
    to stay in the plans dir for this design.
