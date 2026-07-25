@@ -23,8 +23,17 @@
 !scripts/**
 !tests/
 !tests/**
+
+# Allow only the project-local design-artifact directories under docs/
+# (plans and research), not the whole docs/ tree. Gitignore requires
+# un-ignoring each parent directory level before its children, so the
+# chain below is intentionally explicit rather than a single !docs/**.
 !docs/
-!docs/**
+!docs/plans/
+!docs/plans/**
+!docs/research/
+!docs/research/**
+
 !.github/
 !.github/**
 
