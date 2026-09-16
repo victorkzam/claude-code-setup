@@ -1,0 +1,13 @@
+{
+  "name": "claude-code-setup",
+  "owner": {
+    "name": "Victor Kzam"
+  },
+  "plugins": [
+    {
+      "name": "cw",
+      "source": "./",
+      "description": "Claude Code workflow plugin: design/build/ship skills, orchestration agents, and guardrail hooks."
+    }
+  ]
+}
