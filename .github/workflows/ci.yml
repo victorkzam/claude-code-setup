@@ -8,58 +8,80 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
-    name: shellcheck + bats + manifest (ubuntu)
+  ubuntu:
+    name: shellcheck + jq + tests/run.sh all + plugin validate (ubuntu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install shellcheck
-        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+      - name: Install jq and shellcheck
+        run: sudo apt-get update -y && sudo apt-get install -y shellcheck jq
 
-      # Same pinned git-checkout install as the macos job below. `npm install -g
-      # bats` broke on the ubuntu-24.04 runner image: npm's global prefix is
-      # /usr/local, whose man dirs the runner user cannot mkdir (EACCES).
-      - name: Install bats-core from a git checkout
+      - name: shellcheck hooks + tests/run.sh
+        run: shellcheck -x hooks/*.sh tests/run.sh
+
+      - name: validate plugin/marketplace/hooks JSON
+        run: jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json
+
+      - name: tests/run.sh all
+        run: bash tests/run.sh all
+
+      - name: categorical prompt-hygiene greps
+        # Red until T3-T6 rewrite skills/agents/rules; CI only runs at push
+        # time, which happens after T7 (accepted by the design).
         run: |
-          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
-          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
+          set -e
+          if git grep -niE 'opus needs|do not trust|be decisive|read all files fresh|claude-design-active|claude-orchestrator-active' -- skills agents rules; then
+            echo "gate: banned coordination phrases in prompts"
+            exit 1
+          fi
+          if git grep -nwE 'NEVER|ALWAYS|MUST|CRITICAL' -- skills agents rules; then
+            echo "gate: emphatic capitals in prompts"
+            exit 1
+          fi
+          if git grep -niE 'under 50 lines' -- skills agents rules; then
+            echo "gate: 'under 50 lines' phrase in prompts"
+            exit 1
+          fi
+          if git grep -nE '^(disallowedTools|permissionMode|mcpServers|hooks):' -- agents; then
+            echo "gate: disallowed frontmatter keys in agents"
+            exit 1
+          fi
+          for f in agents/*.md; do
+            for k in model tools effort maxTurns; do
+              grep -q "^$k:" "$f" || { echo "$f lacks $k:"; exit 1; }
+            done
+          done
+          if git grep -niE '~/.claude/plans|gitattributes|linguist|git clean' -- skills; then
+            echo "gate: internal-path/meta references in skills"
+            exit 1
+          fi
+          if ! grep -q haiku skills/design/SKILL.md; then
+            echo "gate: skills/design/SKILL.md missing haiku reference"
+            exit 1
+          fi
+          N=$(sed -n 's/^Copyright (c) [0-9]* //p' LICENSE | cut -d' ' -f1)
+          if [ -z "$N" ]; then
+            echo "gate: could not extract copyright name from LICENSE"
+            exit 1
+          fi
+          if git grep -qi "$N" -- skills agents rules hooks tests WORKFLOW.md CLAUDE.md docs; then
+            echo "gate: LICENSE-derived name leaked into prompts/docs"
+            exit 1
+          fi
 
-      - name: shellcheck scripts + hooks
-        # -x: scripts/*.sh source scripts/lib.sh; a bare single-file shellcheck
-        # trips info-level SC1091 (can't follow non-constant/relative source).
-        # House convention: always lint with -x here.
-        #
-        # --severity=error: hooks/*.sh (owned by an earlier task, out of scope
-        # here) carry pre-existing info/warning-level nits (SC2086, SC2015,
-        # SC2221/2222) that are stylistic, not bugs. Gating on errors keeps this
-        # a real correctness gate without failing CI on unrelated existing
-        # style notes. Judgment call — revisit if those files get cleaned up.
-        run: shellcheck -x --severity=error scripts/*.sh hooks/*.sh
-
-      - name: bats (full suite, incl. e2e)
-        run: bats tests/*.bats
-
-      - name: manifest.txt == git ls-files agents/ hooks/ rules/ skills/ (C3)
+      - name: install Claude Code CLI and validate plugin
         run: |
-          diff <(git ls-files agents/ hooks/ rules/ skills/) scripts/manifest.txt
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate .
 
-  bats-macos:
-    name: bats (macos system /bin/bash 3.2 + BSD userland)
+  macos:
+    name: hooks under system bash 3.2 (macos)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      # bats-core from a git checkout, invoked directly out of bin/ — NOT via
-      # brew. A brewed bats would pull in a modern GNU-flavored PATH/toolchain
-      # and mask exactly the GNUisms this job exists to catch. shellcheck is
-      # intentionally skipped here: the ubuntu job already lints every script.
-      - name: Install bats-core from a git checkout
+      - name: tests/run.sh hooks under system /bin/bash (jq preinstalled)
         run: |
-          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
-          echo "$RUNNER_TEMP/bats-core/bin" >> "$GITHUB_PATH"
-
-      - name: bats (full suite, incl. e2e) under system bash
-        run: |
-          echo "bash: $(command -v bash) ($(bash --version | head -n1))"
-          bats tests/*.bats
+          echo "bash: $(command -v /bin/bash) ($(/bin/bash --version | head -n1))"
+          /bin/bash tests/run.sh hooks
