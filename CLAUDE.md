@@ -17,9 +17,9 @@ PM-turned-engineer. Quality and learning over speed. Always explain WHY behind a
   Co-Authored-By: Claude <noreply@anthropic.com>
 - No implementation without an approved design. If uncertain, ask first.
 - Two human checkpoints are non-negotiable: after design, before PR.
-- Each task maps to exactly one atomic Conventional Commit, made by the implementer that did the task. `/ship` verifies the series; it never creates a catch-all or squashed commit.
+- Each task maps to exactly one atomic Conventional Commit made by the implementer that did the task, or `commit: none` for unversioned/external targets (verification-only gates, no commit). `/ship` verifies the series; it never creates a catch-all or squashed commit.
 - A PR is opened only after the feature/milestone is fully built AND the quality gate has passed. No PR on a red gate; no PR mid-build.
-- Mode transitions: `/design` runs in plan mode (may write only `~/.claude/plans/<slug>-*.md`); the post-design checkpoint is the exit-plan-mode point; `/build` and `/ship` run in execute mode.
+- Mode transitions: `/design` runs in plan mode; on plan approval it writes the artifact set to `<project>/docs/plans/<slug>/` (project copy canonical; plans-dir drafts banner-stamped; plans dir for meta-tooling/gitignored-docs work; no-repo case prompts to `git init` or stay in the plans dir); the post-design checkpoint precedes `/build`; `/build` commits the set as a scoped `docs(<slug>):` commit on the feature branch (not necessarily the leading commit in the series); `/build` and `/ship` run in execute mode.
 - `/ship` ends by offering `/compound`. Process-rule edits (CLAUDE.md, `.claude/rules`) are never committed into the feature PR.
 - Model routing and workflow usage follow ~/.claude/rules/orchestration.md.
 

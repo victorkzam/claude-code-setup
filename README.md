@@ -35,8 +35,13 @@ would cost 50K+ and degrade quality as the window fills.
 
 ```
 /design <feature description>   → research + draft + task breakdown + review loop
-   ↓  (checkpoint 1 — you approve, then exit plan mode)
+   ↓  (checkpoint 1 — /design exits plan mode itself, provisionally, then writes
+      the approved artifacts into docs/plans/<slug>/; you approve there, after
+      the write — /build is still the real go/no-go)
 /build [<slug>]                 → implement via subagents, one atomic commit per task
+                                   (plus a `docs(<slug>):` artifacts commit, not
+                                   necessarily leading, when a project design copy
+                                   was promoted)
    ↓  (checkpoint 2 — you approve the commit series)
 /ship                           → verify commits, quality gate, push, open PR
    ↓  (offered, optional)
@@ -209,6 +214,17 @@ customized since the last install surfaces as a per-category diff/prompt —
 it's **skipped by default** and only overwritten if you explicitly consent;
 nothing you've changed is clobbered silently.
 
+**Upgrading into an existing install**: because differing files are skipped by
+default, an adopter who already had `~/.claude` set up before this feature
+shipped won't pick up the new `design-scope-guard.sh` hook or the changed
+`/design` skill automatically — `/setup`'s diff-then-consent flow treats an
+existing file that differs from the new template as skip-by-default, not an
+automatic overwrite. Choose overwrite at the `hooks/` and `skills/` category
+prompts (or run `bash scripts/install.sh --force`) to receive both. The new
+hook installs cleanly onto a fresh copy of `hooks/`; `merge-settings.sh` adds
+its `PreToolUse` registration to `settings.json` during the settings merge
+step, same as any other hook.
+
 ## 10. Uninstalling
 
 There's no uninstall script yet (deliberately deferred — see below); removal
@@ -318,3 +334,39 @@ route-up-for-hard-work, the ≥5-agent workflow threshold), the review-loop
 semantics (`NO_VERDICT` vs `NEEDS_WORK`, counter-model review, ground-truth
 verification), and the hooks — these are the parts built from real failure
 modes and are worth keeping close to as-is.
+
+## 14. Project-local design docs (adopter notes)
+
+`/design` promotes its approved artifact set (`<slug>-design-draft.md`,
+`<slug>-tasks.md`, `<slug>-research-*.md`) out of `~/.claude/plans/` and into
+the adopting project's own `$ROOT/docs/plans/<slug>/`, so a design lives with
+the code it describes and is reviewable from a phone/synced Files app before
+`/build` runs — see `WORKFLOW.md`'s Mode Transitions table for the full
+step-by-step sequence. A few things to know if your project isn't a typical
+git repo:
+
+- **Gitignored `docs/`** — if `docs/` (or specifically `docs/plans/`) is
+  gitignored in your project, the promotion write in `/design`'s guarded
+  window and `/build`'s `docs(<slug>): add design + research artifacts`
+  commit (not necessarily the leading commit in the series) both skip,
+  explicitly and by design — artifacts stay in the plans dir
+  (`~/.claude/plans/`, or `$CLAUDE_CONFIG_DIR/plans/` if you've overridden
+  it) as the canonical copy, exactly how `/design` behaved before this
+  feature.
+- **A published `docs/` site** (Docusaurus, mkdocs, GitHub Pages, etc.) — if
+  your project already builds `docs/` into a live site, promoting WIP planning
+  artifacts into `docs/plans/<slug>/` would land them inside that published
+  tree. Relocate the target directory by editing the write logic in
+  `skills/design/SKILL.md`'s Step 6 — and the matching path patterns in
+  `hooks/design-scope-guard.sh`, or the write will be blocked — to a directory
+  outside your published tree.
+- **Forking this workflow repo itself** — a fork of `claude-code-setup`
+  behaves like any other adopting project for design routing: unless `$ROOT`
+  resolves to your actual `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, artifacts
+  promote into the fork's own `docs/plans/<slug>/` like anywhere else. The
+  meta-tooling exception (artifacts stay in the plans dir) applies only when
+  you're editing your live `~/.claude` config in place.
+- **Upgrading an existing install** — see [Updating](#9-updating): this
+  feature ships a new hook and a changed `/design` skill, both skipped by
+  default on an already-customized config unless you explicitly choose to
+  overwrite.

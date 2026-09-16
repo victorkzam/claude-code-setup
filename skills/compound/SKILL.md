@@ -23,7 +23,10 @@ $ARGUMENTS
 ## Step 1: Establish the shipped scope (main thread)
 1. Determine the range: use `$ARGUMENTS` if given (a commit range or PR number); otherwise `git log --oneline -20` and identify the most recent merged/feature span.
 2. `git diff --stat <range>` and `git log <range>` to see what changed and why.
-3. Locate the design artifact if one exists (`~/.claude/plans/<slug>-design-draft.md` or a `docs/` design doc) and any `/design` review-loop findings recorded with it.
+3. Locate the design artifact if one exists — check the project copy first,
+   `docs/plans/<slug>/<slug>-design-draft.md` (canonical once `/build` has committed it),
+   then fall back to the legacy `~/.claude/plans/<slug>-design-draft.md` — and any
+   `/design` review-loop findings recorded with it.
 
 ## Step 2: Extract lessons (one delegated subagent)
 Spawn a single **`general-purpose`** subagent, model `sonnet`, read-only behavior (instruct it not to modify files), synchronously. Give it: the commit range, the diff/log, the design doc path, and the review-loop findings. Ask it to return ONLY structured JSON:

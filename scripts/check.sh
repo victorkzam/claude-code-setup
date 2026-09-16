@@ -13,7 +13,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 
 MANIFEST="$SCRIPT_DIR/manifest.txt"
 CLAUDE_MD_MARKER='<!-- BEGIN claude-code-setup workflow-rules v'
-HOOK_FILES=(protect-branches.sh protect-secrets.sh orchestrator-delegate-guard.sh syntax-check.sh)
+HOOK_FILES=(protect-branches.sh protect-secrets.sh orchestrator-delegate-guard.sh design-scope-guard.sh syntax-check.sh)
 
 # Version floors (leading-semver comparison). 2.1.53 is the CVE-2026-33068
 # security floor; the two higher tiers gate feature completeness.

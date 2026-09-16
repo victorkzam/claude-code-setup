@@ -40,7 +40,7 @@ EOF
 
 # _managed_cmds <file> — commands referencing a managed hook filename, one per line.
 _managed_cmds() {
-  jq -r '[.. | .command? // empty | select(test("hooks/(protect-branches|protect-secrets|orchestrator-delegate-guard|syntax-check)\\.sh"))] | .[]' "$1"
+  jq -r '[.. | .command? // empty | select(test("hooks/(protect-branches|protect-secrets|orchestrator-delegate-guard|design-scope-guard|syntax-check)\\.sh"))] | .[]' "$1"
 }
 
 _receipt() { find "$CLAUDE_CONFIG_DIR/backups" -name receipt.txt | head -n 1; }
@@ -82,8 +82,8 @@ _receipt() { find "$CLAUDE_CONFIG_DIR/backups" -name receipt.txt | head -n 1; }
   [ "$( jq -r '.permissions.defaultMode' "$s" )" = "plan" ]
   # foreign hook preserved
   [ "$( jq '[.. | .command? // empty | select(contains("/foreign/my-hook.sh"))] | length' "$s" )" -eq 1 ]
-  # all four managed hooks present
-  [ "$( _managed_cmds "$s" | sort -u | wc -l | tr -d ' ' )" -eq 4 ]
+  # all five managed hooks present
+  [ "$( _managed_cmds "$s" | sort -u | wc -l | tr -d ' ' )" -eq 5 ]
   # allow: adopter entries survive, template entries added, deduped (no dup git status)
   [ "$( jq '.permissions.allow | length' "$s" )" -eq 12 ]
   [ "$( jq '[.permissions.allow[] | select(. == "Bash(git status)")] | length' "$s" )" -eq 1 ]
@@ -112,7 +112,7 @@ EOF
   [ "$( jq -r '[.. | .command? // empty | select(contains("custom-guard.sh"))][0]' "$s" )" = "echo 'migrated away from protect-branches.sh, now using custom-guard.sh' && bash /totally/different/custom-guard.sh" ]
   # template managed hooks are added alongside (real protect-branches.sh invocation)
   [ "$( jq '[.. | .command? // empty | select(contains("hooks/protect-branches.sh"))] | length' "$s" )" -eq 1 ]
-  [ "$( _managed_cmds "$s" | sort -u | wc -l | tr -d ' ' )" -eq 4 ]
+  [ "$( _managed_cmds "$s" | sort -u | wc -l | tr -d ' ' )" -eq 5 ]
 }
 
 @test "narrowed merge: template-only key defaultMode is NOT added to permissions" {

@@ -40,10 +40,22 @@ $ARGUMENTS
 `git log --oneline main..HEAD`. The series must **already** be one atomic Conventional
 commit per task, each with the `Co-Authored-By` trailer (produced by `/build`'s
 implementers).
+- Any orchestrator-authored `docs(<slug>): add design + research artifacts` commit
+  (produced by `/build` Phase 0 step 4's promotion of the project's design docs) is an
+  **expected series member** — it does not count against one-commit-per-task, and it does
+  not have to be the leading commit; a later refresh of the artifacts can land anywhere in
+  the range. Do not flag it as a stray or extra commit.
 - **Do NOT create a catch-all "final commit"** and do NOT squash the per-task series.
 - If there are stray **uncommitted** changes, **STOP and report** — that means a `/build`
   task did not self-commit; do not paper over it with a squash commit. The fix is to
   finish/redo that task in `/build`, not to absorb it here.
+  - **Targeted exception**: untracked files under `docs/plans/<slug>/` with **no**
+    `docs(<slug>):` commit anywhere in the series is the documented ceiling state for a
+    `/build` that couldn't commit the design artifacts (e.g. the root-anchored
+    trackability pre-check skipped them, or the commit itself failed — see `/build` Phase
+    0 step 4). This is not a silently-skipped task commit — offer to commit the artifacts
+    now (`docs(<slug>): add design + research artifacts`, same trailer) rather than
+    hard-stopping the ship over it.
 - Verify (do not rewrite) format and atomicity. If messages are messy, *suggest* an
   interactive rebase but never force one.
 
@@ -113,6 +125,11 @@ and proceed straight to Step 4.
      ## Design Reference
      [link to design doc or plan file if applicable]
      ```
+     For **Design Reference**, point to the committed project copy —
+     `docs/plans/<slug>/<slug>-design-draft.md` (canonical once `/build` Phase 0 step 4
+     has committed it as part of the feature branch) — falling back to the legacy
+     `~/.claude/plans/<slug>-design-draft.md` only when no project copy was ever promoted
+     (e.g. a plans-dir-resolved build with no project docs to commit).
 3. Report PR URL to the user
 
 ## Step 5: Offer `/compound` (HITL chain)

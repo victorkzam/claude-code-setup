@@ -5,6 +5,8 @@ disable-model-invocation: true
 argument-hint: <slug | path to <slug>-tasks.md>
 allowed-tools:
   - Read
+  - Write
+  - Edit
   - Glob
   - Grep
   - Agent
@@ -42,16 +44,68 @@ $ARGUMENTS
 
 ## Phase 0: Pre-flight (orchestrator, main thread)
 1. **Resolve the tasks file** (`$ARGUMENTS`):
-   - explicit slug or path argument → `~/.claude/plans/<slug>-tasks.md` (or the given path).
-   - no argument → glob `~/.claude/plans/*-tasks.md`, pick the newest by mtime, **show the match and confirm with the user before proceeding** (do not silently guess).
-   - no tasks file exists → "No `<slug>-tasks.md` found — run `/design` to generate one, or confirm you want me to decompose ad hoc." Do not invent a fixed task count.
-2. Check git status — ensure clean working tree or stash changes.
+   - `ROOT=$(git rev-parse --show-toplevel 2>/dev/null)`.
+   - explicit slug or path argument → check the **project copy first**:
+     `$ROOT/docs/plans/<slug>/<slug>-tasks.md`. `/design`'s Step 6.5 gate now guarantees
+     that a promoted project copy is **all-or-nothing** — present and complete, or absent
+     (on gate failure or any write failure, `/design` removes the partial copy itself) —
+     but `/build` cannot assume every project copy on disk was written by a version of
+     `/design` that had that cleanup, so it still re-verifies. This only counts if the set
+     is **COMPLETE** — `<slug>-tasks.md` AND `<slug>-design-draft.md` both present and
+     non-empty, AND at least one `<slug>-research-*.md` present in
+     `$ROOT/docs/plans/<slug>/`. `/build` can't re-check research *parity* (no plans-dir
+     reference count survives once its drafts are inert), but presence is cheap and closes
+     the crash window where core files were written but no research file was, and cleanup
+     never ran. A partial set (missing/empty core file, or zero research files present) is
+     not usable: warn the user and fall back to the legacy `~/.claude/plans/<slug>-tasks.md`
+     (or the given path) instead. Never silently mix a partial project copy with a
+     plans-dir remainder.
+   - no argument → glob the **project location first**: `$ROOT/docs/plans/*/*-tasks.md`.
+     If that glob has no matches, fall back to the **legacy plans dir**:
+     `~/.claude/plans/*-tasks.md`. Pick the newest by mtime within whichever glob actually
+     matched, **show the match and confirm with the user before proceeding** (do not
+     silently guess).
+   - no tasks file exists in either location → "No `<slug>-tasks.md` found — run
+     `/design` to generate one, or confirm you want me to decompose ad hoc." Do not invent
+     a fixed task count.
+2. Check git status — the working tree must be clean, but **tolerate untracked or
+   modified files under `docs/plans/<slug>/`** (those are the artifacts step 1 just
+   resolved, not build drift). Everything else must be clean or stashed. If stashing, use
+   **plain `git stash` only — NEVER `git stash -u` or `-a`**: either flag would also sweep
+   the untracked `docs/plans/<slug>/` artifacts into the stash, so step 4 below would see
+   no delta and silently skip the docs commit.
 3. Create feature branch from main: `feat/<slug>` or `fix/<slug>`.
-4. Read project CLAUDE.md for coding conventions.
-5. **Allowlist-coverage check**: if permission prompts have come up frequently this
+4. **Commit the design artifacts as a scoped `docs(<slug>):` commit** — typically the first
+   commit on a fresh Phase 0 branch, but not guaranteed to stay leading (a refresh committed
+   later on `continue` can land after task commits) — gated: this step only
+   runs when step 1 resolved a **COMPLETE project copy** at `$ROOT/docs/plans/<slug>/` in
+   THIS repo. A plans-dir-resolved build (the normal meta-tooling case, where there is no
+   project copy to promote) **skips this whole step with a notice** — `git add` on a
+   directory that was never created is a fatal pathspec error, and committing a set the
+   build didn't actually read from would diverge from the source of truth.
+   - Non-repo (`ROOT` empty) → skip with a notice.
+   - **Root-anchored trackability pre-check**: `git -C "$ROOT" check-ignore -q
+     "docs/plans/<slug>/probe"` — always root-anchored, never a cwd-relative probe (a
+     cwd-relative probe run from a subdirectory can false-positive). Ignored → warn and
+     skip; never `git add -f` to force past a project's own `.gitignore`.
+   - Ensure `docs/plans/** linguist-generated=true` is present in `$ROOT/.gitattributes`
+     (add it via `Edit`/`Write` if missing).
+   - `git add "$ROOT/docs/plans/<slug>/"`, plus `.gitattributes` if it was just touched —
+     **never a bare `git add .`**.
+   - Make **ONE** commit: `docs(<slug>): add design + research artifacts`, with the
+     standard co-author trailer (`Co-Authored-By: Claude <noreply@anthropic.com>`, per
+     CLAUDE.md).
+   - No delta to commit (e.g. a prior run already committed it) → skip silently.
+   - Commit command fails → `git restore --staged`, print the failure, and continue with
+     the artifacts left untracked — no retry loop.
+   This is an **orchestrator-authored commit, not a task commit** — it is excluded from
+   the one-commit-per-task accounting everywhere that accounting happens (Phase 2→3 gate,
+   Phase 3 reviewer commit check, Phase 5 series line — see the notes at each).
+5. Read project CLAUDE.md for coding conventions.
+6. **Allowlist-coverage check**: if permission prompts have come up frequently this
    session, suggest running `/fewer-permission-prompts` before spawning implementers —
    a well-populated allowlist keeps delegation moving without repeated interruptions.
-6. **Write the session-scoped delegation sentinel:**
+7. **Write the session-scoped delegation sentinel:**
    `touch "/tmp/claude-orchestrator-active.$CLAUDE_CODE_SESSION_ID"`
    (this env var matches the `session_id` the guard hook reads from stdin; requires
    Claude Code ≥ v2.1.132 — if `$CLAUDE_CODE_SESSION_ID` is empty, fall back to
@@ -79,7 +133,7 @@ whole `<slug>-tasks.md`. The prompt includes:
 3. **`files_owned`** — the implementer reads current contents itself (do not paste file contents)
 4. **A reference pattern**: "Follow the pattern in [existing_file:symbol]"
 5. **The task's `verification`** — exact command(s) + expected result
-6. **The task's `commit:` line** and this instruction: *"When the code is complete and `verification` passes, make exactly ONE atomic commit using this `commit:` line (Conventional format, inheriting CLAUDE.md's generic co-author trailer — never hardcode a model-specific trailer), committing only the files in `files_owned`. One task = one commit. Do NOT push."*
+6. **The task's `commit:` line** and this instruction: *"When the code is complete and `verification` passes, make exactly ONE atomic commit using this `commit:` line (Conventional format, inheriting CLAUDE.md's generic co-author trailer — never hardcode a model-specific trailer), committing only the files in `files_owned`. One task = one commit. Do NOT push."* — **`commit: none`** (external/unversioned target, e.g. a task that edits a live config directory outside this repo): OMIT this instruction entirely. Do not tell the implementer to commit anything for that task; its work is verification-only.
 7. **A required exit report**: instruct the implementer that its final message must end
    with a fenced JSON block matching exactly this schema:
    ```json
@@ -99,14 +153,24 @@ quality-critical tasks where the work should not be scoped to a budget.
 ## Phase 2→3 Gate: Verify against ground truth (orchestrator, main thread)
 Before any reviewer is spawned, the orchestrator itself checks the implementer's exit
 report against ground truth — never proceeds on testimony alone:
-- Run `git log --oneline main..HEAD` (or the task's expected range) and confirm
-  `commit_sha` exists, is Conventional-format, and touches only the task's `files_owned`.
-- Re-run the task's `verification` command yourself and compare the real output against
-  the reported `verification_output`.
+- **`commit: none` tasks**: skip the commit checks entirely — verify by **re-running the
+  task's `verification` command only** and comparing the real output against the reported
+  `verification_output`. There is no `commit_sha` and no `main..HEAD` check to perform;
+  the task has no commit to have produced.
+- **All other tasks**: run `git log --oneline main..HEAD` (or the task's expected range)
+  and confirm `commit_sha` exists, is Conventional-format, and touches only the task's
+  `files_owned`. Also re-run the task's `verification` command yourself and compare the
+  real output against the reported `verification_output`.
 - If `status != "success"`, or the report doesn't match ground truth (commit missing,
   verification actually fails, files touched outside `files_owned`), treat the task as
   failed: do not proceed to Phase 3 — fold this into Phase 4's iteration logic instead
   (or escalate immediately if the iteration budget is already exhausted).
+- **Note**: any `docs(<slug>): add design + research artifacts` commit from Phase 0 step 4
+  is orchestrator-authored, not a task commit — exclude it from every commit-accounting
+  check above (`main..HEAD` may legitimately contain it in addition to the task's own
+  commit; it does not count against the one-commit-per-task expectation, and this is not
+  limited to a "leading" commit — a refresh committed later on `continue` is excluded the
+  same way).
 
 ## Phase 3: Review (delegate to reviewer subagent)
 Only after the ground-truth gate passes, spawn a **reviewer** subagent.
@@ -135,7 +199,7 @@ The reviewer prompt includes:
 5. **Reproduce-before-report**: "Every finding must include a file:line AND either a
    concrete failing command or a specific reproducible failure scenario. Findings without
    evidence are dropped — do not include them in your verdict."
-6. **Commit check:** "Confirm the task produced exactly one commit (`git log --oneline main..HEAD`), in Conventional format, with CLAUDE.md's co-author trailer, touching only `files_owned`. Flag a missing commit, a squashed/multi-task commit, or a malformed message."
+6. **Commit check:** "Confirm the task produced exactly one commit (`git log --oneline main..HEAD`), in Conventional format, with CLAUDE.md's co-author trailer, touching only `files_owned`. Flag a missing commit, a squashed/multi-task commit, or a malformed message. Exclude any `docs(<slug>): add design + research artifacts` commit from this check — that commit is orchestrator-authored (Phase 0 step 4), not a task commit, and may legitimately be present alongside the task's own commit." — **skip this check entirely for a `commit: none` task**: there is no task commit to confirm.
 7. **Required structured verdict**: instruct the reviewer that its final message must end
    with a fenced JSON block matching exactly this schema:
    ```json
@@ -160,7 +224,8 @@ Based on the reviewer's verdict:
 - **NEEDS WORK** (iteration 1-2): Spawn a NEW implementer subagent with:
   - The reviewer's specific issues (file:line + description)
   - The original design requirements
-  - Instruction: "Fix these specific issues. Do not refactor beyond what's listed. Fold the fix into THIS task's existing commit (`git commit --amend` or an autosquash fixup), so the series stays exactly one atomic commit per task — do not add a second commit for the same task."
+  - Instruction (task's `commit:` is NOT `none`): "Fix these specific issues. Do not refactor beyond what's listed. Fold the fix into THIS task's existing commit (`git commit --amend` or an autosquash fixup), so the series stays exactly one atomic commit per task — do not add a second commit for the same task."
+  - Instruction (task's `commit:` IS `none`): "Fix these specific issues by re-editing the owned files only. Do not run `git commit` or `git commit --amend` — this task has no commit of its own, and amending would rewrite an unrelated prior commit on the target (e.g. a live config repo's own history on its `main`)."
   - Then re-run the reviewer
 - **NEEDS WORK** (iteration 3): STOP and escalate to the user with:
   - What was implemented
@@ -173,7 +238,13 @@ Max 3 implement-review iterations. After 2 failed corrections, the problem is us
 ## Phase 5: Human Checkpoint
 Present a summary to the user:
 - **What was built**: Files created/modified with brief descriptions
-- **Commit series**: `git log --oneline main..HEAD` — one atomic Conventional commit per task, each with the co-author trailer (this is what `/ship` will verify, not rewrite)
+- **Committed design artifacts**: if Phase 0 step 4 ran, list the files in the
+  `docs(<slug>): add design + research artifacts` commit (the design draft, tasks file,
+  and any research files) — this commit is separate from the task series below.
+- **Commit series**: `git log --oneline main..HEAD` — one atomic Conventional commit per
+  task (tasks with `commit: none` contribute no commit here — that's expected, not a
+  gap), each with the co-author trailer, **excluding** the orchestrator-authored
+  `docs(<slug>):` artifacts commit above (this is what `/ship` will verify, not rewrite)
 - **Design deviations**: Any places the implementer diverged and why
 - **Review result**: Final reviewer verdict + any remaining nits
 - **Test results**: Pass/fail with details
@@ -196,4 +267,6 @@ Do not proceed to PR creation. the user will run /ship when ready.
 - Do NOT proceed to Phase 3 on the implementer's exit report alone — verify `commit_sha` and re-run `verification` yourself first
 - Do NOT reuse the implementer's model for review — the reviewer must be the counter-model
 - Do NOT treat NO_VERDICT as NEEDS_WORK — retry fresh once, then escalate; it must never consume a fix-iteration
+- Do NOT `git commit --amend` a fix for a `commit: none` task — it has no commit of its own; amending would rewrite an unrelated prior commit on the target repo. Re-edit the owned files only.
+- Do NOT `git add .` or `git add -f` when committing the Phase 0 design-artifacts commit — pathspec the artifact dir explicitly, and never force past a project's `.gitignore`
 - After 2 failed iterations, the problem is usually spec ambiguity — escalate to the user
