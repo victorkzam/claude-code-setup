@@ -1,372 +1,217 @@
-# Claude Code Setup
+# cw — a Claude Code workflow plugin
 
-A user-level `~/.claude` configuration for [Claude Code](https://claude.com/claude-code):
-a `/design` → `/build` → `/ship` agentic workflow, six specialized subagents,
-model-routing rules, and a small set of hooks that turn advisory conventions into
-enforced ones. This is a sanitized export of a daily-driver setup, offered as a
-clone-and-use template — installed via a repo-scoped `/setup` skill (see
-[Quick Start](#6-quick-start-clone-and-use)) that installs and merges everything
-with a diff and your explicit consent, or, if you'd rather skip the
-conversational flow, [four scripts](#7-standalone-install-no-llm-run-the-scripts-directly)
-you can run by hand.
+This repo *is* the Claude Code plugin `cw`: six skills, five agents, three
+hooks, two rule files, one test runner, and CI. It implements a
+`/cw:design` -> `/cw:build` -> `/cw:ship` pipeline — research-grounded
+planning, delegated implementation with one atomic commit per task, and a
+verified, gated release — plus `/cw:compound` to feed lessons back into your
+own project's rules. See `WORKFLOW.md` for the full pipeline narrative and
+`rules/orchestration.md` for the model-routing table.
 
-## 1. Why this exists
+## Requirements
 
-The cost model behind this setup is simple: **research and review are cheap;
-redoing finished work is expensive.** A wrong architectural assumption caught in
-`/design` costs a few minutes of subagent research. The same assumption caught
-after `/build` has already written code costs a revert, a re-plan, and a second
-implementation pass. Every non-negotiable rule in `WORKFLOW.md` — the two human
-checkpoints, the research-before-code sequencing, the review loop that verifies
-findings before acting on them — exists to keep mistakes cheap by catching them
-as early as possible.
+- **Claude Code >= 2.1.269** — the version this plugin was built and tested
+  against (plugin agent-frontmatter parsing, `claude plugin eval`).
+- **git** — for the workflow's own commits and branch checks.
+- **jq** — used by every hook. Without it, `protect-branches.sh` and
+  `protect-secrets.sh` each print a warning to stderr and stand down (exit 0,
+  no enforcement) rather than block your session.
+- **A session in auto mode or `acceptEdits` for `/cw:build`** — a plugin
+  agent cannot grant itself a permission mode, so the implementer subagents
+  need the session already in one of these modes to write without a prompt
+  per edit.
 
-The other half of the cost model is context-window economics. A single Claude
-Code session has a finite context window, and research, exploration, and code
-review all produce far more raw tokens than anyone needs to actually read.
-Delegating that work to subagents — `researcher`, `Explore`, `reviewer` — keeps
-only their ~500-1K token *summaries* in the main thread, while the 10-50K tokens
-of raw search results, file contents, and diffs stay contained in the subagent
-that produced them. A full `/design` → `/build` → `/ship` cycle costs roughly
-5-10K tokens in the main context; doing the same research and review inline
-would cost 50K+ and degrade quality as the window fills.
+## Install
 
-## 2. The workflow
+Three ways to load this plugin, in order of how much you intend to edit it.
 
-```
-/design <feature description>   → research + draft + task breakdown + review loop
-   ↓  (checkpoint 1 — /design exits plan mode itself, provisionally, then writes
-      the approved artifacts into docs/plans/<slug>/; you approve there, after
-      the write — /build is still the real go/no-go)
-/build [<slug>]                 → implement via subagents, one atomic commit per task
-                                   (plus a `docs(<slug>):` artifacts commit, not
-                                   necessarily leading, when a project design copy
-                                   was promoted)
-   ↓  (checkpoint 2 — you approve the commit series)
-/ship                           → verify commits, quality gate, push, open PR
-   ↓  (offered, optional)
-/compound                       → propose durable lessons back into CLAUDE.md / rules
-```
-
-Two human checkpoints are **non-negotiable and not configurable**: after design,
-and before a PR opens. They exist at exactly the two points where a wrong turn is
-otherwise expensive to unwind — before any code gets written, and before anyone
-outside the loop sees the result. Every other step in the pipeline can retry,
-escalate, or auto-resolve itself; these two cannot, by design.
-
-## 3. Model routing
-
-Every role is pinned to a **public alias** (`opus`, `sonnet`, `haiku`) in
-`rules/orchestration.md`, never a dated or context-window-tagged model ID — the
-routing table is the single place model choice lives, so an alias's underlying
-model can change without touching every skill and agent file that references it.
-
-The routing principle is **route up for hard work**: Sonnet → Opus is a better
-$/quality trade than Haiku → Sonnet when the task is genuinely hard (schema
-design, cross-cutting review, direction judgment). Down-tiering to Haiku is for
-bulk, read-only, mechanical fan-out — codebase exploration, not implementation.
-
-Parallel subagent fan-out (workflows) is reserved for **read-heavy work at
-roughly ≥5 parallel agents** — research, codebase mapping, review panels. Below
-that threshold, plain sequential or small-batch subagent calls are simpler and
-just as fast. Implementation never runs naive-parallel: tasks are partitioned by
-disjoint file ownership (`files_owned` in `<slug>-tasks.md`) so independent tasks
-can run in parallel without merge conflicts, while dependent tasks stay
-sequential.
-
-## 4. Failure modes that shaped it
-
-A few concrete failure modes are baked into the design, not just aspirational:
-
-- **`NO_VERDICT` is not `NEEDS_WORK`.** A reviewer that returns no parseable
-  verdict at all (silence, malformed JSON) is a distinct failure state from one
-  that reviewed the code and found problems. Conflating them either burns a
-  fix-iteration on nothing, or worse, quietly treats a review that never
-  happened as a review that passed. The fix: retry once with a fresh reviewer
-  instance, then escalate to a human — never loop on it, never guess.
-- **Ground truth over agent testimony.** An implementer's own exit report is
-  evidence, not proof. Before any reviewer is spawned, the orchestrator
-  independently re-runs the task's verification command and checks `git log`
-  for the claimed commit — an implementer that reports success on a task that
-  didn't actually commit, or whose tests don't actually pass, is caught before
-  it reaches review, not after.
-- **Counter-model review.** The reviewer for a task is always the model tier
-  the implementer *didn't* use — Opus reviews Sonnet's work and vice versa.
-  Reusing the same model for implementation and review correlates its blind
-  spots with itself.
-- **Hooks as executable guardrails, not advisory text.** CLAUDE.md conventions
-  get followed roughly 70% of the time in practice; a `PreToolUse` hook that
-  exits 2 gets followed 100% of the time, because it isn't a suggestion. Two of
-  the hooks in this repo exist because of specific upstream Claude Code
-  behavior: `orchestrator-delegate-guard.sh` works around a case where a
-  blocked tool call can end the turn instead of prompting a delegate spawn
-  (see [anthropics/claude-code#51609](https://github.com/anthropics/claude-code/issues/51609)),
-  and `skills/build/SKILL.md` notes a related known issue where a sentinel
-  block doesn't self-heal into automatic delegation
-  ([anthropics/claude-code#24327](https://github.com/anthropics/claude-code/issues/24327)) —
-  in both cases the mitigation is to treat the block itself as the cue to act,
-  rather than assume the platform will recover on its own.
-
-## 5. Redaction note
-
-This is a sanitized export of a real, daily-driver `~/.claude` configuration —
-not a from-scratch example. Omissions are deliberate, not incomplete coverage.
-Redacted categories:
-
-- **Employer/client paths and names** — absolute paths, project codenames, and
-  any client-identifying strings from the source machine.
-- **Personal data** — email addresses, account identifiers, and anything tied
-  to a specific individual.
-- **Personal permission entries** — the source `settings.json` allow-list
-  accumulated project-specific paths and a long `WebFetch` domain trail; the
-  shipped `settings.example.json` replaces it with a short, generic example set.
-- **Removed safety-toggle overrides** — the source config enabled several
-  local convenience flags (skipped permission prompts, disabled workflow
-  warnings, plugin toggles) that weaken default safety behavior for a specific
-  trusted machine. None of those are appropriate defaults for someone else's
-  environment, so they are excluded entirely rather than carried over.
-- **One project-specific skill excluded** — a `/deep-research` skill existed in
-  the source config but isn't included here; `WORKFLOW.md` and `skills/search/`
-  have been edited so nothing dangling references it.
-
-## 6. Quick Start (clone-and-use)
+### (a) In place — for editing the plugin itself
 
 ```bash
-git clone https://github.com/<you>/claude-code-setup.git
-cd claude-code-setup
-claude
+ln -s /path/to/your/checkout "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/cw"
 ```
 
-When Claude Code opens inside the clone for the first time, it shows a **trust
-dialog** for the folder. **Accept it.** Trusting the repo is what gates access
-to its `.claude/` directory — until you accept, the repo-scoped `/setup` skill
-and its pre-approved read-only commands (`check.sh`, the `--dry-run` forms of
-the install/merge scripts) aren't available to the session at all. This is a
-one-time, per-directory Claude Code trust decision, not something this repo
-configures.
+Claude Code loads any folder under a skills directory that has a
+`.claude-plugin/plugin.json` as a plugin named `cw@skills-dir` — no
+marketplace, no install step. `SKILL.md` edits apply immediately; reload
+agents and hooks with `/reload-plugins`.
 
-Once trusted, type:
+This is the least robust path: Claude Code's auto-update has been reported to
+silently remove symlinks under the config dir
+([issue #50052](https://github.com/anthropics/claude-code/issues/50052)). If
+that bites you, fall back to a real directory instead of a symlink — move
+your checkout itself under `<config dir>/skills/cw`, and symlink *back* from
+wherever you actually edit (your normal projects directory, an IDE workspace,
+etc.) to that real location.
 
-```
-/setup
-```
-
-`/setup` walks a **preflight → install → merge → handoff** flow
-(`.claude/skills/setup/SKILL.md`). It runs a dry-run and shows you a diff
-before every write, and asks for explicit consent before anything actually
-changes your `~/.claude` config — nothing is written silently. Differing files
-are skipped by default per category (agents/hooks/rules/skills); you choose
-keep-vs-overwrite per category. `settings.json` and `CLAUDE.md` are merged one
-at a time, each behind its own diff-then-consent step.
-
-> [!WARNING]
-> **Never clone this repo directly into `~/.claude`, and never point
-> `CLAUDE_CONFIG_DIR` at this clone.** The scripts refuse to install a repo
-> onto itself (a source-equals-destination guard checks for exactly this), but
-> don't rely on that guard — treat the clone and your Claude config dir as two
-> separate locations, always. The scripts honor `CLAUDE_CONFIG_DIR` as an
-> override for the config dir they install into/read from (default
-> `~/.claude`); set it if your Claude Code config lives somewhere non-default.
-
-## 7. Standalone install (no LLM, run the scripts directly)
-
-If you'd rather not run `/setup` conversationally — or you're scripting an
-install — the four scripts it orchestrates can be run by hand, in this order.
-**Run them with `bash`, not `sh`** — they're bash scripts (`set -euo pipefail`,
-bash-specific idioms) and will fail or behave incorrectly under a POSIX `sh`:
+### (b) Marketplace — the reliable path for adopters
 
 ```bash
-bash scripts/check.sh                                   # preflight
-bash scripts/install.sh --dry-run --diff                # see the plan first
-bash scripts/install.sh                                  # real install (prints a backup-dir path — save it)
-bash scripts/merge-settings.sh --dry-run                # see the settings.json diff
-bash scripts/merge-settings.sh --apply --backup-dir <path>
-bash scripts/merge-claude-md.sh --dry-run               # see the CLAUDE.md diff
-bash scripts/merge-claude-md.sh --apply --backup-dir <path>
+claude plugin marketplace add victorkzam/claude-code-setup
+claude plugin install cw@claude-code-setup
 ```
 
-Thread the same `--backup-dir <path>` (captured from `install.sh`'s first
-`CCS-STATUS:backup-dir:<path>` line) into every later `--apply`/`--force` call,
-so the whole install shares one backup run dir and one receipt.
+This installs a copy into the plugin cache
+(`~/.claude/plugins/cache/claude-code-setup/cw/`), independent of any local
+checkout. Update it with `claude plugin update cw@claude-code-setup`.
 
-## 8. Verify the install
-
-1. **Restart Claude Code** — hooks and skills load at session start, so a
-   fresh install/merge only takes effect after a restart.
-2. Run:
-
-   ```bash
-   bash scripts/check.sh --post
-   ```
-
-   to confirm the managed artifacts landed under your config dir.
-3. Run **`/hooks`** and confirm the managed hook entries appear.
-
-## 9. Updating
+### (c) Trial — no install at all
 
 ```bash
-cd claude-code-setup   # your existing clone
-git pull
+claude --plugin-dir /path/to/your/checkout
 ```
 
-Then, **from inside the clone**, run `/setup` again. Any file you've
-customized since the last install surfaces as a per-category diff/prompt —
-it's **skipped by default** and only overwritten if you explicitly consent;
-nothing you've changed is clobbered silently.
+Loads the plugin for that session only.
 
-**Upgrading into an existing install**: because differing files are skipped by
-default, an adopter who already had `~/.claude` set up before this feature
-shipped won't pick up the new `design-scope-guard.sh` hook or the changed
-`/design` skill automatically — `/setup`'s diff-then-consent flow treats an
-existing file that differs from the new template as skip-by-default, not an
-automatic overwrite. Choose overwrite at the `hooks/` and `skills/` category
-prompts (or run `bash scripts/install.sh --force`) to receive both. The new
-hook installs cleanly onto a fresh copy of `hooks/`; `merge-settings.sh` adds
-its `PreToolUse` registration to `settings.json` during the settings merge
-step, same as any other hook.
+## Commands
 
-## 10. Uninstalling
+| Command | What it does | Claude may invoke it on its own? |
+|---|---|---|
+| `/cw:design <description>` | Research-grounded design; ends in one approved plan file | Yes — description-triggered |
+| `/cw:build <slug> [continue [<task-id>]]` | Orchestrates implementation via subagents, one commit per task | No — manual only |
+| `/cw:ship [title]` | Verifies the commit series, runs the gate, pushes, opens the PR | No — manual only |
+| `/cw:compound [range]` | Captures lessons from a shipped change into CLAUDE.md/rules | No — manual only |
+| `/cw:search [--quick\|--deep] <query>` | Multi-source web research with citations | Yes — description-triggered |
+| `/cw:google-workspace` | Google Docs/Drive routes and dead ends playbook | Yes — description-triggered |
 
-There's no uninstall script yet (deliberately deferred — see below); removal
-is manual but deterministic because every write is logged to a **receipt**.
-The receipt for a given install lives at `<backup-run-dir>/receipt.txt`, where
-`<backup-run-dir>` is a timestamped directory under
-`~/.claude/backups/claude-code-setup/<timestamp>/` (or under `$CLAUDE_CONFIG_DIR`
-if you've overridden it). Each line is tab-separated:
-`action  path  backup-path  repo-sha  timestamp`.
+`/cw:build`, `/cw:ship`, and `/cw:compound` are marked
+`disable-model-invocation: true` deliberately — they change files, branches,
+or open PRs, so they only run when you type the command.
 
-Walk the receipt and act **per `action`**, in this order — the ordering
-matters because it's what protects data that predates the install:
+## Agents
 
-- **`installed`** — the file didn't exist before `/setup`; `rm` it.
-- **`overwritten`** — a file you already had was replaced; **restore it from
-  the backup path on that line** (do **not** `rm` it — `rm` would destroy the
-  original the backup exists specifically to preserve).
-- **`merged`** — if the backup-path field is non-empty, same as
-  `overwritten`: **restore from the backup path** on that line (never `rm`
-  it). If the backup-path field is **empty**, the file didn't exist before
-  `/setup` and was created fresh by the merge — `rm` it, same as `installed`.
-- **`unchanged`** — the file already matched what `/setup` would have
-  written, so nothing was touched; leave it alone. (Earlier runs' lines still
-  govern it if you ran `/setup` more than once.)
-- **`skipped`** — nothing was written; leave it alone.
+| Agent | Model | Role |
+|---|---|---|
+| `cw:researcher` | sonnet | Web research, read-only |
+| `cw:implementer` | sonnet (opus per-task for hard work) | Writes code, makes the task's commit |
+| `cw:reviewer` | opus | Reviews an implementer's diff, read-only |
+| `cw:design-reviewer` | opus | Doc/codebase fidelity review of a design draft |
+| `cw:direction-reviewer` | opus, effort xhigh | Premise/direction review, once per design |
 
-If you ran `/setup` more than once (e.g. across an update), restore from the
-**earliest** run's backups — that's the true pre-setup state; later runs'
-backups are snapshots of an already-modified file, not the original.
+## A profile CLAUDE.md
 
-## 11. Prerequisites
+A profile's `CLAUDE.md` is deliberately short — an identity line and two
+imports for the process rules this plugin ships:
 
-- **jq** — REQUIRED. `protect-branches.sh` and `protect-secrets.sh` fail closed
-  without it: they block the corresponding git operations/edits entirely rather
-  than silently skip the check if `jq` isn't installed. `brew install jq` /
-  `apt install jq`.
-- **git** — obviously; also needed for `git identity` (`user.name` /
-  `user.email`) so the workflow's own commits (one per `/build` task, plus
-  `/ship`) have an author.
-- **Claude Code ≥ v2.1.53** — REQUIRED. This is a security floor
-  (CVE-2026-33068); `check.sh` fails closed below it.
-- **Claude Code ≥ v2.1.198** — RECOMMENDED, for the full feature set: the
-  custom `Explore` agent's model override (below this version it inherits the
-  session's main-thread model instead of running on `haiku`), and
-  session-scoped sentinel isolation in `orchestrator-delegate-guard.sh` (fully
-  available from ≥ v2.1.132; below that the guard falls back to a legacy
-  global sentinel with only a TTL as backstop).
-- **gh** — the GitHub CLI, needed **only for `/ship`'s** PR creation, not for
-  install. Run `gh auth login` before your first `/ship`.
-- **shellcheck + bats** — DEV-ONLY, for contributing to this repo's own
-  scripts/tests. Not required to adopt or run `/setup`.
-- **context7 + exa MCP servers** — OPTIONAL. `skills/search/SKILL.md` falls
-  back to `WebSearch` for any angle where an MCP tool is unavailable; `/design`
-  and `/search` degrade gracefully without them, just with less precision
-  (context7's version-pinned docs, exa's semantic search).
+```markdown
+# Your profile
+Profile: acme
+@<checkout>/rules/workflow.md
+@<checkout>/rules/orchestration.md
+```
 
-## 12. Troubleshooting
+Stack preferences (language conventions, framework choices) belong in your
+*project* `CLAUDE.md` files, not in this profile file — this one is workflow
+process, not stack opinion.
 
-- **`/setup` doesn't appear.** Confirm you accepted the folder's **trust**
-  dialog, and that you're running Claude Code from inside the clone (the skill
-  is repo-scoped, not installed globally). Then restart Claude Code once —
-  skill discovery has known upstream flakiness on a fresh trust grant
-  ([anthropics/claude-code#45956](https://github.com/anthropics/claude-code/issues/45956),
-  [anthropics/claude-code#43092](https://github.com/anthropics/claude-code/issues/43092)).
-  If it still doesn't appear, `bash scripts/check.sh` will surface targeted
-  fixes for common environment issues.
-- **`check.sh --post` shows a `FAIL:` line.** A managed artifact is missing
-  from your config dir — re-run `/setup` to install it.
-- **`check.sh --post` shows a `WARN: ... ignore if you declined this merge`.**
-  This is informational, not an error — it means you chose not to merge
-  `settings.json` or `CLAUDE.md`, and the check is just confirming that.
-- **A hook is blocking legitimate work.** See the `protect-secrets` note
-  below.
+The import path depends on how you installed:
 
-**`protect-secrets` self-lockout note**: once installed, the `protect-secrets`
-hook blocks Claude Code itself from writing/editing files matching secret
-patterns (`.env`, `*credentials*`, `*.pem`, SSH/AWS/GCP key paths, etc.) — and
-it applies in **every** project you use Claude Code in afterward, not just this
-one, because it's wired into your global `~/.claude/settings.json`. If it
-blocks something you legitimately need to edit, that settings file is yours:
-edit or remove the hook entry directly. Re-running `/setup` later will offer
-to re-merge it, but it will never force the merge back in without your
-consent.
+- **(a) in place / (c) trial** — import from your checkout directly:
+  `@<checkout>/rules/workflow.md`.
+- **(b) marketplace** — run `claude plugin details cw@claude-code-setup` to
+  print the current cache path and import from there; that path changes on
+  every `claude plugin update cw@claude-code-setup`, so re-check it after
+  updating, or keep a separate throwaway clone just for stable import paths.
 
-**Plugin packaging (future work)**: a Claude Code plugin is a plausible future
-distribution mechanism for this setup. Today's clone-and-use + `/setup`
-approach was chosen deliberately instead — current plugin docs impose
-verbatim-file limits that don't fit this repo's merge-not-clobber model for
-`settings.json`/`CLAUDE.md`.
+Also set `plansDirectory: docs/plans` in your settings so `/cw:design`'s plan
+mode writes the plan file into the project instead of the default location.
 
-**Backups accumulate**: backup run directories under
-`~/.claude/backups/claude-code-setup/` are never auto-deleted (there's no
-pruning script yet). They're cheap to keep and are what makes uninstall
-deterministic, but feel free to delete old ones by hand once you're confident
-you won't need to restore from them.
+## Extra profiles
 
-## 13. What to adapt vs keep
+Run more than one Claude Code identity (work vs. personal, or one per client)
+with `CLAUDE_CONFIG_DIR`:
 
-**Yours to replace**: the `Identity` and `Stack Preferences` blocks in
-`CLAUDE.md` (marked "example — replace with your own"), the generic example
-`permissions.allow` list in `settings.example.json`, and the model alias
-mappings in `rules/orchestration.md` if you have different tier preferences.
+```bash
+alias claude-acme='CLAUDE_CONFIG_DIR=$HOME/.claude-acme claude'
+```
 
-**The transferable system**: the `/design` → `/build` → `/ship` workflow rules
-and mode transitions, the model routing table's *principles* (public aliases,
-route-up-for-hard-work, the ≥5-agent workflow threshold), the review-loop
-semantics (`NO_VERDICT` vs `NEEDS_WORK`, counter-model review, ground-truth
-verification), and the hooks — these are the parts built from real failure
-modes and are worth keeping close to as-is.
+An alias survives GUI launchers better than a one-off shell export. List the
+mapping between project paths and config dirs in `~/.claude-profiles`, one
+per line, `<folder prefix>|<config dir>`, `#` comments allowed:
 
-## 14. Project-local design docs (adopter notes)
+```
+~/work/acme|~/.claude-acme
+~/side-projects|~/.claude-personal
+```
 
-`/design` promotes its approved artifact set (`<slug>-design-draft.md`,
-`<slug>-tasks.md`, `<slug>-research-*.md`) out of `~/.claude/plans/` and into
-the adopting project's own `$ROOT/docs/plans/<slug>/`, so a design lives with
-the code it describes and is reviewable from a phone/synced Files app before
-`/build` runs — see `WORKFLOW.md`'s Mode Transitions table for the full
-step-by-step sequence. A few things to know if your project isn't a typical
-git repo:
+The `profile-check.sh` `SessionStart` hook reads this file and reports a
+`wrong profile: ...` notice if the active config dir doesn't match the
+mapped one for your current directory, and a `missing import: ...` notice
+for any `@import` line in `CLAUDE.md` whose target doesn't exist.
 
-- **Gitignored `docs/`** — if `docs/` (or specifically `docs/plans/`) is
-  gitignored in your project, the promotion write in `/design`'s guarded
-  window and `/build`'s `docs(<slug>): add design + research artifacts`
-  commit (not necessarily the leading commit in the series) both skip,
-  explicitly and by design — artifacts stay in the plans dir
-  (`~/.claude/plans/`, or `$CLAUDE_CONFIG_DIR/plans/` if you've overridden
-  it) as the canonical copy, exactly how `/design` behaved before this
-  feature.
-- **A published `docs/` site** (Docusaurus, mkdocs, GitHub Pages, etc.) — if
-  your project already builds `docs/` into a live site, promoting WIP planning
-  artifacts into `docs/plans/<slug>/` would land them inside that published
-  tree. Relocate the target directory by editing the write logic in
-  `skills/design/SKILL.md`'s Step 6 — and the matching path patterns in
-  `hooks/design-scope-guard.sh`, or the write will be blocked — to a directory
-  outside your published tree.
-- **Forking this workflow repo itself** — a fork of `claude-code-setup`
-  behaves like any other adopting project for design routing: unless `$ROOT`
-  resolves to your actual `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, artifacts
-  promote into the fork's own `docs/plans/<slug>/` like anywhere else. The
-  meta-tooling exception (artifacts stay in the plans dir) applies only when
-  you're editing your live `~/.claude` config in place.
-- **Upgrading an existing install** — see [Updating](#9-updating): this
-  feature ships a new hook and a changed `/design` skill, both skipped by
-  default on an already-customized config unless you explicitly choose to
-  overwrite.
+## settings.example.json
+
+Use `settings.example.json` as a starting point, not a drop-in replacement —
+copy it to `settings.json` and adapt it. It sets `defaultMode: "auto"`,
+`effortLevel: "high"`, `plansDirectory: "docs/plans"`, a short generic
+`permissions.deny`/`allow`/`ask` set, `autoMode.allow: ["$defaults"]`, and
+`enabledPlugins` for the official TypeScript, Python, and Rust LSP plugins
+from the `claude-plugins-official` marketplace. It carries no `hooks` key —
+this plugin registers its own hooks, and a plugin hook and a settings hook
+with the same command both fire, so don't add them again in `settings.json`.
+
+**What to adapt**: the `permissions.allow`/`deny` lists for your own
+workflow, the model alias mappings in `rules/orchestration.md` if you have
+different tier preferences, and the identity line in your profile
+`CLAUDE.md`. **What to keep as-is**: the workflow rules in
+`rules/workflow.md`, the checkpoint semantics, and the hooks.
+
+## Kill switch
+
+```bash
+claude plugin disable cw@skills-dir        # install path (a)
+claude plugin disable cw@claude-code-setup # install path (b)
+```
+
+Turns all three hooks off at once. This is also the answer for a repo that
+pushes to `main` by convention — `protect-branches.sh` has no opt-out
+environment variable by design, so disabling the plugin is the supported
+escape hatch, not a bypass flag on the hook itself.
+
+## Migration from the old installer
+
+If you previously installed this project's skills, agents, and hooks
+directly into `~/.claude` (five skills, six agents, five hooks) rather than
+as a plugin: delete those user-scope copies, and remove their `hooks` entries
+from `settings.json`. A plugin hook and a settings hook that share the same
+command both fire, so leaving the old entries in place double-runs them.
+
+## `/cw:search --deep`
+
+The `--deep` flag hands off to the bundled `/deep-research` workflow, which
+needs dynamic workflows enabled (a paid-plan feature; `disableWorkflows`
+turns it off). Without that, `/cw:search` falls back to its default
+multi-source mode.
+
+## Update and uninstall
+
+- **(a) in place** — `git pull` in your checkout; a symlinked install picks
+  it up on the next `/reload-plugins`, a real-directory install picks it up
+  immediately. Remove the symlink (or directory) to uninstall.
+- **(b) marketplace** — `claude plugin update cw@claude-code-setup` to pull
+  the latest version; `claude plugin uninstall cw@claude-code-setup` to
+  remove it.
+- **(c) trial** — nothing persists; just stop passing `--plugin-dir`.
+
+## Running the tests
+
+```bash
+bash tests/run.sh all
+```
+
+Runs hook behavior, file-size budgets, a cross-file phrase-duplication check,
+and the `settings.example.json`/`tests/settings-keys.txt` cross-check.
+Optionally set `CW_SCAN_PATTERNS=<your private pattern file>` to also scan
+the tracked tree for private strings you've defined — this is empty by
+default and off unless you set it.
+
+## Changelog
+
+### 1.0.0
+
+First release as a Claude Code plugin. Converts the prior clone-and-use,
+conversationally-installed configuration into a proper plugin (`cw`): a
+plugin manifest and marketplace entry, lean skill and agent prompts, hooks
+registered through `hooks/hooks.json` (including a new `profile-check.sh`
+`SessionStart` hook), a single `tests/run.sh` test runner replacing the old
+per-script tests, and CI running the same checks on every push and PR.
