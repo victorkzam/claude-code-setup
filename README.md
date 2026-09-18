@@ -145,7 +145,7 @@ Use `settings.example.json` as a starting point, not a drop-in replacement —
 copy it to `settings.json` and adapt it. It sets `defaultMode: "auto"`,
 `effortLevel: "high"`, `plansDirectory: "docs/plans"`, a short generic
 `permissions.deny`/`allow`/`ask` set, `autoMode.allow: ["$defaults"]`, and
-`enabledPlugins` for the official TypeScript, Python, and Rust LSP plugins
+`enabledPlugins` for the official TypeScript, Python, and Swift LSP plugins
 from the `claude-plugins-official` marketplace. It carries no `hooks` key —
 this plugin registers its own hooks, and a plugin hook and a settings hook
 with the same command both fire, so don't add them again in `settings.json`.
