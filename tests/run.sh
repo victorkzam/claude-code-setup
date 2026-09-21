@@ -1,20 +1,21 @@
 #!/bin/bash
 # tests/run.sh — single test runner, one subcommand per invocation.
-# Subcommands: hooks, size, dedupe, scan, all.
+# Subcommands: hooks, size, dedupe, scan, trailers, all.
 # Must work on macOS system bash 3.2 and bash 5, BSD and GNU coreutils: no
 # mapfile/readarray, no ${var,,}, no associative arrays, no sed -i without a
 # suffix, no grep -P. Deliberately no `set -u`: bash < 4.4 raises "unbound
 # variable" on `"${empty_array[@]}"` under nounset, and this script is run
 # under bash 3.2 in CI.
 #
-# Usage errors exit 2; check failures exit 1; success exits 0.
+# Usage errors exit 2; check failures exit 1; a skipped trailers check
+# returns exit 3; success exits 0.
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BASELINE_BYTES=73738
 BASH_BIN="${BASH:-bash}"
 
 usage() {
-  echo "usage: tests/run.sh {hooks|size|dedupe|scan|all} [options]" >&2
+  echo "usage: tests/run.sh {hooks|size|dedupe|scan|trailers|all} [options]" >&2
   exit 2
 }
 
@@ -681,6 +682,59 @@ cmd_scan() {
 }
 
 # ---------------------------------------------------------------------------
+# trailers
+# ---------------------------------------------------------------------------
+
+cmd_trailers() {
+  [ $# -eq 0 ] || usage
+  local expected shallow base n fail c body trailer_count co_count short subject
+
+  expected=$(sed -n 's/^  \(Co-Authored-By: .*\)$/\1/p' "$ROOT/rules/workflow.md" | head -n 1)
+  if [ -z "$expected" ]; then
+    echo "trailers: cannot read the expected trailer from rules/workflow.md" >&2
+    return 1
+  fi
+
+  shallow=$(git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)
+  base=""
+  if [ "$shallow" != "true" ]; then
+    if git -C "$ROOT" rev-parse --verify -q main >/dev/null 2>&1; then
+      base="main"
+    elif git -C "$ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+      base="origin/main"
+    fi
+  fi
+
+  if [ "$shallow" = "true" ] || [ -z "$base" ]; then
+    echo "trailers: skipped (shallow repository or no main/origin/main ref)"
+    return 3
+  fi
+
+  n=0
+  fail=0
+  while read -r c; do
+    [ -z "$c" ] && continue
+    n=$((n + 1))
+    body=$(git -C "$ROOT" log -1 --format=%B "$c")
+    trailer_count=$(printf '%s\n' "$body" | grep -c -F -x -- "$expected")
+    co_count=$(printf '%s\n' "$body" | grep -ci '^Co-Authored-By:')
+    if [ "$trailer_count" -eq 1 ] && [ "$co_count" -eq 1 ] && ! printf '%s\n' "$body" | grep -q '^Claude-Session:'; then
+      continue
+    fi
+    short=$(git -C "$ROOT" rev-parse --short "$c")
+    subject=$(git -C "$ROOT" log -1 --format=%s "$c")
+    echo "trailers: VIOLATION $short $subject: expected exactly one trailer line \"$expected\" and no session line"
+    fail=1
+  done < <(git -C "$ROOT" rev-list --no-merges "$base..HEAD")
+
+  if [ "$fail" -eq 0 ]; then
+    echo "trailers: OK ($base..HEAD, $n commits)"
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # all
 # ---------------------------------------------------------------------------
 
@@ -709,7 +763,7 @@ check_settings_keys() {
 
 cmd_all() {
   [ $# -eq 0 ] || usage
-  local fail summary
+  local fail summary trailers_rc
   fail=0
   summary=""
 
@@ -748,6 +802,24 @@ all: settings-keys: PASS"
 all: settings-keys: FAIL"
     fail=1
   fi
+
+  cmd_trailers
+  trailers_rc=$?
+  case "$trailers_rc" in
+    0)
+      summary="$summary
+all: trailers: PASS"
+      ;;
+    3)
+      summary="$summary
+all: trailers: SKIPPED"
+      ;;
+    *)
+      summary="$summary
+all: trailers: FAIL"
+      fail=1
+      ;;
+  esac
 
   if [ -n "${CW_SCAN_PATTERNS:-}" ]; then
     if [ ! -r "$CW_SCAN_PATTERNS" ]; then
@@ -794,6 +866,10 @@ main() {
     scan)
       shift
       cmd_scan "$@"
+      ;;
+    trailers)
+      shift
+      cmd_trailers "$@"
       ;;
     all)
       shift
