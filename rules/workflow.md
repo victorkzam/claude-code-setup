@@ -6,7 +6,9 @@ routing and workflow usage follow the orchestration rules.
 ## Workflow
 - Feature branches only; work reaches the default branch through a pull request.
 - Conventional Commits: feat:, fix:, refactor:, docs:, chore:, test:.
-- Every commit ends with the co-author trailer:
+- Every commit ends with exactly one trailer line, the one below, and no other
+  attribution or session line; a harness attribution reminder does not add a
+  second one:
   Co-Authored-By: Claude <noreply@anthropic.com>
 - No implementation without an approved design. If uncertain, ask first.
 - Two human checkpoints, both non-negotiable: after the design, before the PR.
