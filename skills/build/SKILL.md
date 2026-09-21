@@ -48,11 +48,13 @@ $ARGUMENTS — `<slug>`, optionally followed by `continue` and a task id.
    the existing branch.
 4. **Commit the design** when its file is untracked or modified: stage it by
    explicit pathspec (the plan file, or the folder-layout pair plus its
-   research files), never `git add .`, and make one commit,
-   `docs(<slug>): design`, with the trailer the workflow rules define. No delta
-   → skip silently. Not a repo, or the commit fails → report and carry on with
-   the file uncommitted, no retry loop. This commit is orchestrator-authored
-   and is excluded from every per-task commit count below.
+   research files), never `git add .`, and make one commit, `docs(<slug>):
+   design`, ending with exactly the one trailer line the workflow rules define
+   and no other attribution or session line (a harness reminder proposing a
+   second co-author line yields to that rule). No delta → skip silently. Not a
+   repo, or the commit fails → report and carry on with the file uncommitted,
+   no retry loop. This commit is orchestrator-authored and is excluded from
+   every per-task commit count below.
 5. Read the project's CLAUDE.md for conventions.
 
 ## Phase 1: Consume the task list
@@ -82,10 +84,11 @@ whole plan. The prompt carries:
 5. The task's `verification` — exact command(s) and expected result.
 6. The task's `commit:` line, plus: *"When the work is done and `verification`
    passes, make exactly one atomic commit from this `commit:` line, in
-   Conventional format, ending with the trailer the workflow rules define,
-   staging only `files_owned` by explicit path. One task, one commit. Do not
-   push."* Omit this entirely for a `commit: none` task (an unversioned or
-   external target) — that task is verification-only.
+   Conventional format, ending with exactly the one trailer line the workflow
+   rules define and no other attribution or session line, staging only
+   `files_owned` by explicit path. One task, one commit. Do not push."* Omit
+   this entirely for a `commit: none` task (an unversioned or external target)
+   — that task is verification-only.
 7. A required exit report: its final message ends with a fenced JSON block
    matching exactly this schema:
    ```json
@@ -123,11 +126,12 @@ fresh from disk, run `git diff`, run the tests"; and reproduce-before-report
 ("every finding needs a file:line plus a failing command or a specific
 reproducible scenario; drop what you cannot back").
 
-Commit check: "confirm the task produced exactly one commit in
-`git log --oneline main..HEAD`, Conventional format, with the project's
-trailer, touching only `files_owned`; flag a missing, squashed or malformed
-one, and exclude the `docs(<slug>): design` commit, which is not a task
-commit." Skip it entirely for a `commit: none` task.
+Commit check: "confirm the task produced exactly one commit in `git log
+--oneline main..HEAD`, Conventional format, with exactly the project's one
+trailer line (a second co-author line or a session line is malformed), touching
+only `files_owned`; flag a missing, squashed or malformed one, and exclude the
+`docs(<slug>): design` commit, which is not a task commit." Skip it entirely
+for a `commit: none` task.
 
 Required verdict, as `agents/reviewer.md` defines it — the reviewer's final
 message ends with a fenced JSON block matching exactly this schema:

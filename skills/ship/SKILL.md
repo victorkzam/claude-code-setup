@@ -39,8 +39,10 @@ $ARGUMENTS
 Against the plan's task list (`docs/plans/<slug>.md`):
 
 - Each task's `commit:` subject appears exactly once, in Conventional format,
-  carrying the trailer the workflow rules define. Tasks marked `commit: none`
-  contribute nothing here — that is expected, not a gap.
+  carrying exactly the one trailer line the workflow rules define; a second
+  co-author line or a session line is a malformed message — report it and
+  suggest a rebase. Tasks marked `commit: none` contribute nothing here — that
+  is expected, not a gap.
 - A `docs(<slug>): design` commit from `/cw:build` is an expected member of the
   series and does not have to lead it.
 - No catch-all or squashed commit. Do not create one, and do not rewrite the
@@ -50,7 +52,7 @@ Against the plan's task list (`docs/plans/<slug>.md`):
   report. The fix is to finish that task in `/cw:build`, not to absorb it here.
   The one exception is an uncommitted design file with no `docs(<slug>):`
   commit anywhere in the range — offer to commit it now as `docs(<slug>):
-  design` with the same trailer.
+  design` with the same single trailer line.
 
 ## Step 3: Quality gate
 This skill is project-agnostic; detect the gate in this precedence and run
@@ -81,7 +83,7 @@ Process-rule capture is `/cw:compound`'s job, offered separately in Step 6.
 Check whether the change makes any of these stale: the project README (new
 features, changed setup), `ARCHITECTURE.md` (new services, changed data flow),
 `CHANGELOG.md`. If so, update them in one atomic `docs:` commit with the same
-trailer as the rest of the series.
+single trailer line as the rest of the series.
 
 ## Step 5: Push and open the PR
 1. `git push -u origin HEAD`.
