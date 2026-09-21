@@ -88,6 +88,24 @@ or open PRs, so they only run when you type the command.
 | `cw:design-reviewer` | opus | Doc/codebase fidelity review of a design draft |
 | `cw:direction-reviewer` | opus, effort xhigh | Premise/direction review, once per design |
 
+`/cw:design` also spawns the built-in `Explore` agent with `model: haiku` on
+each call; the plugin ships no agent by that name — its agents load under the
+`cw:` prefix. To keep every session's exploration on haiku, add a user-scope
+override at `~/.claude/agents/Explore.md`; it replaces the built-in prompt
+with yours, so keep it short and read-only:
+
+```markdown
+---
+name: Explore
+description: Fast, read-only codebase exploration. Locates files, symbols and patterns; reports paths and line numbers.
+model: haiku
+tools: Read, Glob, Grep
+---
+Locate what the request names with Glob and Grep, read only the ranges you
+need to confirm a finding, and report file paths with line numbers. Do not
+modify anything.
+```
+
 ## A profile CLAUDE.md
 
 A profile's `CLAUDE.md` is deliberately short — an identity line and two
@@ -170,11 +188,31 @@ escape hatch, not a bypass flag on the hook itself.
 
 ## Migration from the old installer
 
-If you previously installed this project's skills, agents, and hooks
-directly into `~/.claude` (five skills, six agents, five hooks) rather than
-as a plugin: delete those user-scope copies, and remove their `hooks` entries
-from `settings.json`. A plugin hook and a settings hook that share the same
-command both fire, so leaving the old entries in place double-runs them.
+If you previously installed this project's files directly into `~/.claude`
+rather than as a plugin, the old manifest put five skills (`build`,
+`compound`, `design`, `search`, `ship`), six agents, five hooks and
+`rules/orchestration.md` there. To migrate:
+
+- Delete the user-scope copies of the five skills, the five hooks and
+  `rules/orchestration.md`, and remove the five `hooks` entries from
+  `settings.json` — a plugin hook and a settings hook that share the same
+  command both fire, so leaving the old entries in place double-runs them.
+  Three of the old hooks (`design-scope-guard.sh`,
+  `orchestrator-delegate-guard.sh`, `syntax-check.sh`) have no plugin
+  replacement: 1.0.0 retires them on purpose.
+- Delete the five agents the plugin now ships under the `cw:` prefix, but keep
+  `agents/Explore.md` if you had it: a user-scope agent named `Explore`
+  overrides the built-in one and keeps its own `model: haiku`, and this
+  plugin ships no agent by that name (`/cw:design` pins haiku per call
+  regardless).
+- Replace any workflow rules pasted into your profile `CLAUDE.md` with the two
+  imports shown above, and remove any other stray copies of the old layout.
+
+Verify with `claude plugin list` (one `cw` entry), by checking that the
+`skills/`, `agents/` and `hooks/` folders under your config dir hold none of
+the old files (apart from `agents/Explore.md` if you kept it), and, inside a
+session, with `/hooks`: each event lists the plugin's hook once, with no copy
+from `settings.json`.
 
 ## `/cw:search --deep`
 
@@ -199,8 +237,10 @@ multi-source mode.
 bash tests/run.sh all
 ```
 
-Runs hook behavior, file-size budgets, a cross-file phrase-duplication check,
-and the `settings.example.json`/`tests/settings-keys.txt` cross-check.
+Runs hook behavior, file-size budgets, a cross-file phrase-duplication
+check, the `settings.example.json`/`tests/settings-keys.txt` cross-check,
+and a per-commit trailer check on `main..HEAD` (skipped, and reported as
+such, only when neither `main` nor `origin/main` resolves).
 Optionally set `CW_SCAN_PATTERNS=<your private pattern file>` to also scan
 the tracked tree for private strings you've defined — this is empty by
 default and off unless you set it.
