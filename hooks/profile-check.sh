@@ -11,7 +11,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 OUT='{}'
-# shellcheck disable=SC2329 # invoked indirectly via `trap ... EXIT` below
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via `trap ... EXIT` below; 0.9.0 reports SC2317, 0.10+ SC2329
 finish() {
   printf '%s\n' "$OUT"
   exit 0
