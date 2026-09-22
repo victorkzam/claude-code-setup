@@ -98,13 +98,14 @@ speed_case() {
 REPOS_OK=0
 
 setup_scratch_repos() {
-  # Four scratch repositories for the state/resolution cases: rm (main, one
+  # Five scratch repositories for the state/resolution cases: rm (main, one
   # commit), rf (cloned, HEAD feat/x, no upstream), rc (like rf plus an
   # upstream on main, push.default unset), ru (like rc plus
-  # push.default=upstream). Each git invocation inherits the real HOME's
-  # gitconfig, so identity and signing are pinned with -c. If `git init -b
-  # main` fails, REPOS_OK stays 0 and every case naming a scratch repo is
-  # skipped through push_case_repo.
+  # push.default=upstream), and "My Repo" (main, one commit, path contains a
+  # space — rule C). Each git invocation inherits the real HOME's gitconfig,
+  # so identity and signing are pinned with -c. If `git init -b main` fails,
+  # REPOS_OK stays 0 and every case naming a scratch repo is skipped through
+  # push_case_repo.
   local gc
   gc="-c user.name=cw-test -c user.email=cw-test@example.com -c commit.gpgsign=false"
   # shellcheck disable=SC2086 # $gc is a fixed, space-separated list of -c flags, deliberately unquoted
@@ -122,6 +123,7 @@ setup_scratch_repos() {
   git $gc clone -q "$SCRATCH/rm" "$SCRATCH/rf" >/dev/null 2>&1
   # shellcheck disable=SC2086
   git -C "$SCRATCH/rf" $gc checkout -q -b feat/x >/dev/null 2>&1
+  mkdir -p "$SCRATCH/rf/sub"
 
   # shellcheck disable=SC2086
   git $gc clone -q "$SCRATCH/rm" "$SCRATCH/rc" >/dev/null 2>&1
@@ -135,6 +137,15 @@ setup_scratch_repos() {
   git -C "$SCRATCH/ru" $gc checkout -q -b feat/x >/dev/null 2>&1
   git -C "$SCRATCH/ru" branch --set-upstream-to=origin/main >/dev/null 2>&1
   git -C "$SCRATCH/ru" config push.default upstream >/dev/null 2>&1
+
+  # shellcheck disable=SC2086
+  if git $gc init -q -b main "$SCRATCH/My Repo" >/dev/null 2>&1; then
+    printf 'x\n' > "$SCRATCH/My Repo/README.md"
+    # shellcheck disable=SC2086
+    git -C "$SCRATCH/My Repo" $gc add README.md >/dev/null 2>&1
+    # shellcheck disable=SC2086
+    git -C "$SCRATCH/My Repo" $gc commit -q -m init >/dev/null 2>&1
+  fi
 
   REPOS_OK=1
 }
@@ -304,6 +315,27 @@ hooks_nested_cases() {
   # shellcheck disable=SC2016 # payload literal for the hook, not a shell expansion here
   push_case 2 "backtick-wrapped push main -> blocked" "/tmp" 'echo `git push origin main`'
   push_case_repo 2 "nested sh -c cd \$SCRATCH/rm && push -> blocked" "/tmp" "sh -c \"cd $SCRATCH/rm && git push\""
+  push_case_repo 2 "rule S: subshell cd into rf, bare push cwd rm -> blocked" "$SCRATCH/rm" "(cd $SCRATCH/rf && git status) && git push"
+  push_case_repo 0 "rule S: subshell cd into rm, bare push cwd rf -> allowed" "$SCRATCH/rf" "(cd $SCRATCH/rm && git status) && git push"
+  push_case_repo 0 "rule S: subshell cd to a non-repo path then harmless command, bare push cwd rf -> allowed" "$SCRATCH/rf" "(cd $SCRATCH && echo hi) && git push"
+  push_case_repo 2 "rule S: plain checkout main inside a subshell, bare push cwd rf -> blocked (cannot determine)" "$SCRATCH/rf" '(git checkout main) && git push'
+  push_case_repo 2 "rule S: cd into rm outside a subshell, bare push inside it -> blocked" "/tmp" "cd $SCRATCH/rm && (git push)"
+  push_case_repo 2 "rule S: \$(...) subshell cd into rf, bare push cwd rm -> blocked" "$SCRATCH/rm" "echo \$(cd $SCRATCH/rf && git status) && git push"
+  push_case_repo 0 "rule S: \$(...) subshell cd into rm, bare push cwd rf -> allowed" "$SCRATCH/rf" "echo \$(cd $SCRATCH/rm && git status) && git push"
+  # shellcheck disable=SC2016 # payload literal for the hook, not a shell expansion here
+  push_case_repo 2 "rule S: \$(...) plain checkout main, bare push cwd rf -> blocked (cannot determine)" "$SCRATCH/rf" 'echo $(git checkout main) && git push'
+  push_case_repo 2 "rule S: backtick subshell cd into rf, bare push cwd rm -> blocked" "$SCRATCH/rm" "echo \`cd $SCRATCH/rf && git status\` && git push"
+  push_case_repo 0 "rule S: backtick subshell cd into rm, bare push cwd rf -> allowed" "$SCRATCH/rf" "echo \`cd $SCRATCH/rm && git status\` && git push"
+  # shellcheck disable=SC2016 # payload literal for the hook, not a shell expansion here
+  push_case_repo 2 "rule S: backtick plain checkout main, bare push cwd rf -> blocked (cannot determine)" "$SCRATCH/rf" 'echo `git checkout main` && git push'
+  push_case 0 "rule S: subshell that only echoes, explicit push to feat/x -> allowed" "/tmp" '(echo hi) && git push origin feat/x'
+  push_case 2 "rule S: unbalanced close paren before explicit push to main -> blocked" "/tmp" 'echo hi) && git push origin main'
+  push_case_repo 2 "rule S: nested ((checkout main)) then push, cwd rf -> blocked (unknown propagates through both closes)" "$SCRATCH/rf" '( ( git checkout main ) ) && git push'
+  push_case_repo 2 "rule S: (cd rf && (checkout main)) then push, cwd rm -> blocked (unknown propagates through both closes)" "$SCRATCH/rm" "( cd $SCRATCH/rf && ( git checkout main ) ) && git push"
+  # shellcheck disable=SC2016 # payload literal for the hook, not a shell expansion here
+  push_case_repo 2 "rule S: backtick inside parens, checkout main, cwd rf -> blocked (unknown propagates)" "$SCRATCH/rf" '( echo `git checkout main` ) && git push'
+  push_case_repo 2 "rule S: prose ) inside a subshell (cd rm, echo \"1) build\", push), cwd rf -> blocked (unbalanced close)" "$SCRATCH/rf" "( cd $SCRATCH/rm && echo \"1) build\" && git push )"
+  push_case_repo 0 "rule S: balanced (cd rf/sub && echo ok) then push -u origin HEAD, cwd rf -> allowed" "$SCRATCH/rf" "(cd $SCRATCH/rf/sub && echo ok) && git push -u origin HEAD"
 }
 
 hooks_backslash_cases() {
@@ -349,6 +381,12 @@ hooks_state_cases() {
   push_case 2 "checkout feat/x -- README.md && push -> blocked (path checkout, not a branch change)" "/tmp" 'git checkout feat/x -- README.md && git push'
   push_case_repo 2 "cd -P \$SCRATCH/rm && push -> blocked (-P is an option, not the dir)" "/tmp" "cd -P $SCRATCH/rm && git push"
   push_case_repo 2 "cd -- \$SCRATCH/rm && push -> blocked (-- is an option, not the dir)" "/tmp" "cd -- $SCRATCH/rm && git push"
+  push_case_repo 2 "rule C: cd into a quoted path with a space -> blocked (cannot determine)" "/tmp" "cd \"$SCRATCH/My Repo\" && git push"
+  push_case_repo 2 "rule C: cd into rm with a redirection token after it -> blocked (current branch main, not a second positional)" "/tmp" "cd $SCRATCH/rm 2>/dev/null && git push"
+  push_case_repo 0 "rule C: pushd rf > /dev/null (spaced redirection) then push -> allowed (not a second positional)" "/tmp" "pushd $SCRATCH/rf > /dev/null && git push"
+  push_case_repo 0 "rule C: cd rf 2> /dev/null (spaced redirection) then push -> allowed (not a second positional)" "/tmp" "cd $SCRATCH/rf 2> /dev/null && git push"
+  push_case_repo 0 "rule C: cd rf then a trailing comment, push on the next line -> allowed (comment stops the scan)" "/tmp" "cd $SCRATCH/rf # into the clone
+git push"
 }
 
 hooks_resolution_cases() {
@@ -364,6 +402,13 @@ hooks_resolution_cases() {
   push_case_repo 0 "cwd rm: push feat/x -> allowed (explicit slash destination)" "$SCRATCH/rm" 'git push feat/x'
   push_case_repo 2 "cwd /tmp: checkout -b feat/y && git -C \$SCRATCH/rm push -> blocked (-C wins over tracked branch)" "/tmp" "git checkout -b feat/y && git -C $SCRATCH/rm push"
   push_case_repo 0 "cwd /tmp: checkout -b feat/y && git -C \$SCRATCH/rf push -> allowed" "/tmp" "git checkout -b feat/y && git -C $SCRATCH/rf push"
+  push_case_repo 2 "rule G: git -C rf checkout feat/x, bare push cwd rm -> blocked (current branch main, cwd untouched)" "$SCRATCH/rm" "git -C $SCRATCH/rf checkout feat/x && git push"
+  push_case_repo 0 "rule G: git -C rm checkout -b feat/z, bare push cwd rf -> allowed" "$SCRATCH/rf" "git -C $SCRATCH/rm checkout -b feat/z && git push"
+  push_case_repo 2 "rule G: git -C rm checkout main then git -C rm push, cwd rf -> blocked" "$SCRATCH/rf" "git -C $SCRATCH/rm checkout main && git -C $SCRATCH/rm push"
+  push_case_repo 0 "rule G: git -C rf checkout -b feat/z then git -C rf push, cwd rf -> allowed" "$SCRATCH/rf" "git -C $SCRATCH/rf checkout -b feat/z && git -C $SCRATCH/rf push"
+  push_case_repo 2 "rule G: git -C rf checkout main then cd rf then bare push, cwd /tmp -> blocked" "/tmp" "git -C $SCRATCH/rf checkout main && cd $SCRATCH/rf && git push"
+  push_case_repo 2 "rule G: git -C rf/ (trailing slash) checkout main, cd rf (no slash), bare push, cwd /tmp -> blocked (normalised match)" "/tmp" "git -C $SCRATCH/rf/ checkout main && cd $SCRATCH/rf && git push"
+  push_case_repo 2 "rule G: git -C ./rf checkout main, cd rf, bare push, cwd scratch root -> blocked (normalised match)" "$SCRATCH" "git -C ./rf checkout main && cd rf && git push"
 }
 
 hooks_speed_cases() {

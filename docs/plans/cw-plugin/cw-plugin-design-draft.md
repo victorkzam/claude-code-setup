@@ -222,16 +222,21 @@ blocking every tool call; jq is a stated requirement in the README).
   and an escaped `\git` are scanned the same as a top-level command; `cd`/`pushd` and
   `git switch`/`checkout` earlier in the command are tracked so a later refspec-less
   push resolves against that state (state the text cannot resolve blocks with an
-  explicit-refspec hint rather than falling through); blocks a `git push` whose
-  destination is main/master by explicit refspec, by the tracked or resolved current
-  branch, or by an upstream on main; blocks `--force`/`-f`/`+ref` and `--all`/`--mirror`;
-  `--force-with-lease`, `--force-with-lease=<ref>` and `--force-if-includes` pass
-  through to other destinations; everything else exits 0. Scope: a guardrail against
-  the agent's own accidental pushes, not a sandbox; out of scope a command held in a
+  explicit-refspec hint rather than falling through); a `(...)`, `$(...)`, or
+  backtick-quoted subshell is its own scope for that tracking, restored when it
+  closes, so a `cd` or checkout inside one can't leak into a push outside it, and a
+  plain checkout inside the scope leaves the branch unknown on close instead of
+  silently reverting; blocks a `git push` whose destination is main/master by
+  explicit refspec, by the tracked or resolved current branch, or by an upstream
+  on main; blocks `--force`/`-f`/`+ref` and `--all`/`--mirror`; `--force-with-lease`,
+  `--force-with-lease=<ref>` and `--force-if-includes` pass through to other
+  destinations; everything else exits 0. Scope: a guardrail against the agent's
+  own accidental pushes, not a sandbox; out of scope a command held in a
   variable and `eval`ed indirectly, an xargs-fed refspec, a shell wrapper or alias not
-  named `git`, and `git -c k="v w"` before push (the embedded space defeats the word
-  split); quoted prose that spells a push to main — inside `echo "…"`, a heredoc line,
-  a `--body "…"` — is blocked as if it were the command. No opt-out switch (a
+  named `git`, `git -c k="v w"` before push (the embedded space defeats the word
+  split), and a `gh api` call; quoted prose that spells a push to main — inside
+  `echo "…"`, a heredoc line, a `--body "…"` — is blocked as if it were the
+  command. No opt-out switch (a
   shell-wide variable would silently follow the maintainer across profiles): a repo
   that pushes to main by convention uses the kill switch below or removes the entry
   from `hooks/hooks.json` in its fork; documented in the README.

@@ -191,20 +191,25 @@ escape hatch, not a bypass flag on the hook itself.
 
 `protect-branches.sh` reads the text of each Bash command, splits it on shell
 separators, strips quotes and backslashes so nested `sh -c`/`bash -c`/`eval`
-strings and a backslash-escaped `git` are inspected too, and tracks `cd` and
-`git switch`/`checkout` earlier in the same command. It blocks a `git push`
-whose destination is `main`/`master` (an explicit refspec, the current
-branch, or an upstream on main), plain force pushes (`--force`, `-f`,
-`+ref`), and `--all`/`--mirror`; lease pushes (`--force-with-lease`,
-`--force-if-includes`) to a feature branch pass. When a `cd` or branch change
-earlier in the command can't be resolved from the text (a variable, `cd -`,
-a path checkout), a bare `git push` after it is blocked with a hint to use
-an explicit refspec.
+strings and a backslash-escaped `git` are inspected too, and tracks
+`cd`/`pushd` and `git switch`/`checkout` earlier in the same command. It
+blocks a `git push` whose destination is `main`/`master` (an explicit
+refspec, the current branch, or an upstream on main), plain force pushes
+(`--force`, `-f`, `+ref`), and `--all`/`--mirror`; lease pushes
+(`--force-with-lease`, `--force-if-includes`) to a feature branch pass. When
+a `cd` or branch change earlier in the command can't be resolved from the
+text (a variable, `cd -`, a path checkout), a bare `git push` after it is
+blocked with a hint to use an explicit refspec. A `(...)`, `$(...)`, or
+backtick-quoted subshell is its own scope for that tracking, restored when
+it closes, so a `cd` or checkout inside one can't leak into a push outside
+it; a plain checkout inside the scope leaves the branch unknown on close
+instead of silently reverting.
 
 It is a guardrail against the agent's own accidental pushes, not a sandbox: a
 command held in a variable, `xargs`-fed refspecs, wrappers and aliases not
-named `git`, and `gh api` calls are out of scope, and a line of prose that
-spells out a push to the default branch inside a command is blocked as if it
+named `git`, `git -c k="v w"` before push, and `gh api` calls are out of
+scope, and a line of prose that spells out a push to the default branch
+inside a command is blocked as if it
 were the command itself — keep such text in a file instead.
 
 ## Migration from the old installer
