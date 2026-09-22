@@ -1,5 +1,6 @@
 {
   "name": "claude-code-setup",
+  "description": "Marketplace for the cw plugin, a design/build/ship workflow of skills, orchestration agents, and guardrail hooks for Claude Code.",
   "owner": {
     "name": "Victor Kzam"
   },
