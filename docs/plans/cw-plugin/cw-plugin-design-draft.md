@@ -215,19 +215,31 @@ timeouts 10 s, no `if` field anywhere — `if` fails open on chained or unparsea
 §R3 row 6). Every script starts with the jq check: when `jq` is missing it prints `cw: jq not
 found, hook skipped` to stderr and exits 0 (fail open with a visible warning rather than
 blocking every tool call; jq is a stated requirement in the README).
-- PreToolUse, matcher `Bash` → `protect-branches.sh` (LIVE base, exemption removed): splits
-  `tool_input.command` on `&&`, `||`, `;`, `|` and newlines, tokenises each segment (env
-  assignments and git global options skipped), and blocks with exit 2 any segment that is a
-  `git push` to a main/master destination (explicit refspec, or the current branch when no
-  refspec is given) or that carries `--force`/`-f`; everything else exits 0. No opt-out
-  switch (a shell-wide variable would silently follow the maintainer across profiles): a repo
-  that pushes to main by convention uses the kill switch below or removes the entry from
-  `hooks/hooks.json` in its fork; documented in the README.
+- PreToolUse, matcher `Bash` → `protect-branches.sh` (LIVE base, exemption removed): fast
+  path exits 0 when the normalised `tool_input.command` carries no `push` substring;
+  otherwise splits the command on `&&`, `||`, `;`, `|`, `(`, `)`, backticks and newlines,
+  with quotes and backslashes stripped first so a nested `sh -c`/`bash -c`/`eval` string
+  and an escaped `\git` are scanned the same as a top-level command; `cd`/`pushd` and
+  `git switch`/`checkout` earlier in the command are tracked so a later refspec-less
+  push resolves against that state (state the text cannot resolve blocks with an
+  explicit-refspec hint rather than falling through); blocks a `git push` whose
+  destination is main/master by explicit refspec, by the tracked or resolved current
+  branch, or by an upstream on main; blocks `--force`/`-f`/`+ref` and `--all`/`--mirror`;
+  `--force-with-lease`, `--force-with-lease=<ref>` and `--force-if-includes` pass
+  through to other destinations; everything else exits 0. Scope: a guardrail against
+  the agent's own accidental pushes, not a sandbox; out of scope a command held in a
+  variable and `eval`ed indirectly, an xargs-fed refspec, a shell wrapper or alias not
+  named `git`, and `git -c k="v w"` before push (the embedded space defeats the word
+  split); quoted prose that spells a push to main — inside `echo "…"`, a heredoc line,
+  a `--body "…"` — is blocked as if it were the command. No opt-out switch (a
+  shell-wide variable would silently follow the maintainer across profiles): a repo
+  that pushes to main by convention uses the kill switch below or removes the entry
+  from `hooks/hooks.json` in its fork; documented in the README.
 - PreToolUse, matcher `Write|Edit|MultiEdit|NotebookEdit` → `protect-secrets.sh` (LIVE base
   incl. the template allowlist, which applies only after the directory checks — a
   `.env.example` under `secrets/`, `.ssh/` or `.aws/` stays blocked; reads `file_path //
   filePath // notebook_path`; empty path → allow).
-- SessionStart, matcher `startup|resume|clear|fork` → `profile-check.sh`, which always exits 0
+- SessionStart, matcher `startup|resume|clear|compact|fork` → `profile-check.sh`, which always exits 0
   (exit 2 would block session initialisation, §R2.5) and always prints the JSON context line:
   reads `$HOME/.claude-profiles` (private, `<folder prefix>|<config dir>` per line, `#`
   comments and malformed lines skipped, `~` expanded; an absent file means no profile
@@ -482,9 +494,12 @@ install the CLI for `claude plugin validate`). No runtime dependency on node.
    CLAUDE_CONFIG_DIR="$CFG" claude plugin list | grep -q 'cw@skills-dir'`; `env
    CLAUDE_CONFIG_DIR="$CFG" claude plugin details cw@skills-dir` lists 6 skills, 5 agents and
    the hooks (2 events, 3 commands).
-3. Gates: `bash tests/run.sh all` exits 0 (15 hook cases; the size ratio printed, target
-   ≤60%; per-file caps; dedupe; settings keys); `shellcheck -x hooks/*.sh tests/run.sh` clean
-   at the default severity; `wc -l < WORKFLOW.md` ≤ 200.
+3. Gates: `bash tests/run.sh all` exits 0 (hook cases covering nested interpreters, an
+   escaped git token, chained cd and branch changes, --all/--mirror, lease variants, an
+   upstream on main under push.default=upstream, 100k-character timing, the secrets
+   patterns and profile-check's error paths; 0 failed; the size ratio printed, target
+   ≤60%; per-file caps; dedupe; settings keys); `shellcheck -x hooks/*.sh tests/run.sh`
+   clean at the default severity; `wc -l < WORKFLOW.md` ≤ 200.
 4. Categorical (tracked files): `! git grep -qniE 'opus needs|do not trust|be decisive|read
    all files fresh|claude-design-active|claude-orchestrator-active' -- skills agents rules`;
    `! git grep -qwE 'NEVER|ALWAYS|MUST|CRITICAL' -- skills agents rules`; `! git grep -qniE
