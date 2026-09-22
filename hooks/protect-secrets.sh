@@ -36,7 +36,9 @@ case "$LC" in
   *.pem|*.key|*.p8|*.pfx|*.jks|*.keystore| \
   *id_rsa*|*id_ed25519*| \
   *.gnupg/*| \
-  *service-account*.json|*gcp*key*.json)
+  *service-account*.json|*gcp*key*.json| \
+  *.p12|*.netrc|*id_dsa*|*id_ecdsa*| \
+  *.tfstate|*.tfstate.backup)
     echo "Blocked: cannot edit sensitive file: $FILE" >&2
     exit 2
     ;;

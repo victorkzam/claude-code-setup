@@ -1,5 +1,5 @@
 #!/bin/bash
-# SessionStart(startup|resume|clear|fork) — surface profile-config mismatches
+# SessionStart(startup|resume|clear|compact|fork) — surface profile-config mismatches
 # and missing CLAUDE.md imports as a SessionStart notice. Always exits 0
 # (exit 2 would block session initialization) and always prints exactly one
 # JSON line to stdout, even on an internal error.
@@ -11,7 +11,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 OUT='{}'
-# shellcheck disable=SC2317,SC2329 # invoked indirectly via `trap ... EXIT` below; 0.9.0 reports SC2317, 0.10+ SC2329
+# shellcheck disable=SC2317,SC2329 # invoked indirectly via `trap ... EXIT` below; older shellcheck reports SC2317, newer SC2329
 finish() {
   printf '%s\n' "$OUT"
   exit 0
@@ -50,6 +50,7 @@ if [ -f "$PROFILES_FILE" ]; then
   BEST_PREFIX=""
   BEST_DIR=""
   while IFS= read -r pline || [ -n "$pline" ]; do
+    pline="${pline%$'\r'}"
     case "$pline" in
       \#*) continue ;;
     esac
@@ -107,12 +108,12 @@ if [ ${#NOTICES[@]} -gt 0 ]; then
       MSG="$MSG; $n"
     fi
   done
-  OUT=$(jq -nc --arg msg "$MSG" \
-    '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}')
+  NEW=$(jq -nc --arg msg "$MSG" \
+    '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}') && OUT="$NEW"
 else
   BASE=$(basename "$ACTIVE")
-  OUT=$(jq -nc --arg ctx "profile $BASE · plugin cw" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}')
+  NEW=$(jq -nc --arg ctx "profile $BASE · plugin cw" \
+    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}') && OUT="$NEW"
 fi
 
 exit 0

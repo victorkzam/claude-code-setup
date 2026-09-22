@@ -13,6 +13,7 @@
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BASELINE_BYTES=73738
 BASH_BIN="${BASH:-bash}"
+HOOKS_DIR="${CW_HOOKS_DIR:-$ROOT/hooks}"
 
 usage() {
   echo "usage: tests/run.sh {hooks|size|dedupe|scan|trailers|all} [options]" >&2
@@ -52,27 +53,113 @@ check_code() {
   fi
 }
 
+push_case() {
+  # $1: expected code, $2: description, $3: cwd, $4: command
+  local expected desc cwd cmd payload code
+  expected="$1"
+  desc="$2"
+  cwd="$3"
+  cmd="$4"
+  payload=$(jq -nc --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
+  printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
+  code=$?
+  check_code "$code" "$expected" "$desc"
+}
+
+push_case_repo() {
+  # Same as push_case, but skipped (outside the pass/fail count) when the
+  # scratch git repositories could not be created.
+  if [ "$REPOS_OK" -ne 1 ]; then
+    printf 'hooks: skipped (no scratch repo): %s\n' "$2"
+    return
+  fi
+  push_case "$@"
+}
+
+speed_case() {
+  # $1: expected code, $2: description, $3: cwd, $4: command
+  local expected desc cwd cmd payload code secs
+  expected="$1"
+  desc="$2"
+  cwd="$3"
+  cmd="$4"
+  payload=$(jq -nc --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
+  SECONDS=0
+  printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
+  code=$?
+  secs=$SECONDS
+  if [ "$code" -eq "$expected" ] && [ "$secs" -le 1 ]; then
+    report 1 "$desc"
+  else
+    report 0 "$desc" "exit=$code want=$expected secs=$secs"
+  fi
+}
+
+REPOS_OK=0
+
+setup_scratch_repos() {
+  # Four scratch repositories for the state/resolution cases: rm (main, one
+  # commit), rf (cloned, HEAD feat/x, no upstream), rc (like rf plus an
+  # upstream on main, push.default unset), ru (like rc plus
+  # push.default=upstream). Each git invocation inherits the real HOME's
+  # gitconfig, so identity and signing are pinned with -c. If `git init -b
+  # main` fails, REPOS_OK stays 0 and every case naming a scratch repo is
+  # skipped through push_case_repo.
+  local gc
+  gc="-c user.name=cw-test -c user.email=cw-test@example.com -c commit.gpgsign=false"
+  # shellcheck disable=SC2086 # $gc is a fixed, space-separated list of -c flags, deliberately unquoted
+  if ! git $gc init -q -b main "$SCRATCH/rm" >/dev/null 2>&1; then
+    REPOS_OK=0
+    return
+  fi
+  printf 'x\n' > "$SCRATCH/rm/README.md"
+  # shellcheck disable=SC2086
+  git -C "$SCRATCH/rm" $gc add README.md >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  git -C "$SCRATCH/rm" $gc commit -q -m init >/dev/null 2>&1
+
+  # shellcheck disable=SC2086
+  git $gc clone -q "$SCRATCH/rm" "$SCRATCH/rf" >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  git -C "$SCRATCH/rf" $gc checkout -q -b feat/x >/dev/null 2>&1
+
+  # shellcheck disable=SC2086
+  git $gc clone -q "$SCRATCH/rm" "$SCRATCH/rc" >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  git -C "$SCRATCH/rc" $gc checkout -q -b feat/x >/dev/null 2>&1
+  git -C "$SCRATCH/rc" branch --set-upstream-to=origin/main >/dev/null 2>&1
+
+  # shellcheck disable=SC2086
+  git $gc clone -q "$SCRATCH/rm" "$SCRATCH/ru" >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  git -C "$SCRATCH/ru" $gc checkout -q -b feat/x >/dev/null 2>&1
+  git -C "$SCRATCH/ru" branch --set-upstream-to=origin/main >/dev/null 2>&1
+  git -C "$SCRATCH/ru" config push.default upstream >/dev/null 2>&1
+
+  REPOS_OK=1
+}
+
 hooks_push_cases() {
   local home_dir out code
   home_dir="$SCRATCH/base"
 
   out=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"/tmp"}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-branches.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "push origin main -> blocked"
 
   out=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push -u origin feat/x"},"cwd":"/tmp"}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-branches.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>/dev/null)
   code=$?
   check_code "$code" 0 "push -u origin feat/x -> allowed"
 
   out=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push --force origin feat/x"},"cwd":"/tmp"}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-branches.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "push --force -> blocked"
 
   out=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"cd /tmp && git push origin main"},"cwd":"/tmp"}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-branches.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "chained cd && push main -> blocked"
 }
@@ -82,22 +169,22 @@ hooks_secrets_cases() {
   home_dir="$SCRATCH/base"
 
   out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/.env"}}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-secrets.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "write .env -> blocked"
 
   out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/.env.example"}}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-secrets.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
   code=$?
   check_code "$code" 0 "write .env.example -> allowed"
 
   out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/secrets/.env.example"}}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-secrets.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "write secrets/.env.example -> blocked"
 
   out=$(printf '%s' '{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"/tmp/x/secrets.ipynb"}}' \
-    | HOME="$home_dir" "$BASH_BIN" "$ROOT/hooks/protect-secrets.sh" 2>/dev/null)
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
   code=$?
   check_code "$code" 2 "notebookedit secrets.ipynb -> blocked"
 }
@@ -113,7 +200,7 @@ hooks_jq_absent_case() {
 
   errfile="$SCRATCH/c9.err"
   printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push origin main"},"cwd":"/tmp"}' \
-    | PATH="$nojq_bin" HOME="$SCRATCH/base" "$BASH_BIN" "$ROOT/hooks/protect-branches.sh" \
+    | PATH="$nojq_bin" HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" \
     >/dev/null 2>"$errfile"
   code=$?
   errtxt=$(cat "$errfile")
@@ -138,7 +225,7 @@ hooks_profile_cases_a() {
   h="$SCRATCH/c10"
   mkdir -p "$h"
   out=$(printf '%s' '{"cwd":"/tmp","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h/.claude" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h/.claude" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" '.hookSpecificOutput.additionalContext | startswith("profile ")'; then
     report 1 "profile right, no .claude-profiles -> additionalContext"
@@ -150,7 +237,7 @@ hooks_profile_cases_a() {
   mkdir -p "$h/other"
   printf '/tmp/proj|%s/other\n' "$h" > "$h/.claude-profiles"
   out=$(printf '%s' '{"cwd":"/tmp/proj/sub","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" '.systemMessage | test("wrong profile")'; then
     report 1 "profile wrong -> systemMessage wrong profile"
@@ -159,7 +246,7 @@ hooks_profile_cases_a() {
   fi
 
   out=$(printf '%s' '{"cwd":"/somewhere/else","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" 'has("systemMessage") | not'; then
     report 1 "unmapped cwd, .claude-profiles present -> no systemMessage"
@@ -175,7 +262,7 @@ hooks_profile_cases_b() {
   mkdir -p "$h"
   printf '@/nonexistent/x.md\n' > "$h/CLAUDE.md"
   out=$(printf '%s' '{"cwd":"/tmp","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" '.systemMessage | test("missing import")' \
     && jqtest "$out" '.hookSpecificOutput.additionalContext | test("missing import")'; then
@@ -189,7 +276,7 @@ hooks_profile_cases_b() {
   printf 'x' > "$h/rules/x.md"
   printf '@rules/x.md\n' > "$h/CLAUDE.md"
   out=$(printf '%s' '{"cwd":"/tmp","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" 'has("systemMessage") | not'; then
     report 1 "relative import exists -> no systemMessage"
@@ -201,7 +288,7 @@ hooks_profile_cases_b() {
   mkdir -p "$h/other"
   printf '# comment\nmalformed line\n/tmp/proj|%s/other\n' "$h" > "$h/.claude-profiles"
   out=$(printf '%s' '{"cwd":"/tmp/proj/sub","hook_event_name":"SessionStart"}' \
-    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$ROOT/hooks/profile-check.sh" 2>/dev/null)
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
   code=$?
   if [ "$code" -eq 0 ] && jqtest "$out" '.systemMessage | test("wrong profile")'; then
     report 1 "commented/malformed lines ignored -> wrong profile"
@@ -210,19 +297,233 @@ hooks_profile_cases_b() {
   fi
 }
 
+hooks_nested_cases() {
+  push_case 2 "nested sh -c push main -> blocked" "/tmp" 'sh -c "git push origin main"'
+  push_case 2 "nested bash -c cd && push main -> blocked" "/tmp" "bash -c 'cd /tmp && git push origin main'"
+  push_case 2 "eval push main -> blocked" "/tmp" 'eval "git push origin main"'
+  # shellcheck disable=SC2016 # payload literal for the hook, not a shell expansion here
+  push_case 2 "backtick-wrapped push main -> blocked" "/tmp" 'echo `git push origin main`'
+  push_case_repo 2 "nested sh -c cd \$SCRATCH/rm && push -> blocked" "/tmp" "sh -c \"cd $SCRATCH/rm && git push\""
+}
+
+hooks_backslash_cases() {
+  push_case 2 "backslash-escaped \\git push main -> blocked" "/tmp" '\git push origin main'
+  push_case 0 "backslash-escaped \\git push -u origin feat/x -> allowed" "/tmp" '\git push -u origin feat/x'
+}
+
+hooks_options_cases() {
+  push_case 2 "push --all origin -> blocked" "/tmp" 'git push --all origin'
+  push_case 2 "push --mirror origin -> blocked" "/tmp" 'git push --mirror origin'
+  push_case 2 "push origin --all -> blocked" "/tmp" 'git push origin --all'
+  push_case 0 "push --force-with-lease origin feat/x -> allowed" "/tmp" 'git push --force-with-lease origin feat/x'
+  push_case 0 "push --force-with-lease=feat/x origin feat/x -> allowed" "/tmp" 'git push --force-with-lease=feat/x origin feat/x'
+  push_case 0 "push --force-if-includes origin feat/x -> allowed" "/tmp" 'git push --force-if-includes origin feat/x'
+  push_case 2 "push --force-with-lease origin main -> blocked" "/tmp" 'git push --force-with-lease origin main'
+  push_case 2 "push -fu origin feat/x -> blocked" "/tmp" 'git push -fu origin feat/x'
+  push_case 2 "push origin +feat/x -> blocked" "/tmp" 'git push origin +feat/x'
+  push_case 2 "push origin HEAD:main -> blocked" "/tmp" 'git push origin HEAD:main'
+  push_case 2 "push origin --delete main -> blocked" "/tmp" 'git push origin --delete main'
+  push_case 2 "push origin :main -> blocked" "/tmp" 'git push origin :main'
+  push_case 0 "push origin --dry-run feat/x -> allowed" "/tmp" 'git push origin --dry-run feat/x'
+}
+
+hooks_names_cases() {
+  push_case 0 "push -u origin feat/main-nav -> allowed" "/tmp" 'git push -u origin feat/main-nav'
+  push_case 0 "commit message mentioning push to main -> allowed" "/tmp" 'git commit -m "docs: pushing to main is blocked"'
+  push_case 2 "env-assignment FOO=bar git push origin main -> blocked" "/tmp" 'FOO=bar git push origin main'
+  push_case 2 "git -c core.x=1 push origin main -> blocked" "/tmp" 'git -c core.x=1 push origin main'
+  push_case 2 "case-insensitive GIT push origin main -> blocked" "/tmp" 'GIT push origin main'
+}
+
+hooks_state_cases() {
+  push_case 2 "switch main && push -> blocked" "/tmp" 'git switch main && git push'
+  push_case 2 "checkout main && push origin -> blocked" "/tmp" 'git checkout main && git push origin'
+  push_case_repo 2 "cd \$SCRATCH/rm && push -> blocked" "/tmp" "cd $SCRATCH/rm && git push"
+  # shellcheck disable=SC2016 # payload literal for the hook: $DIR must stay unexpanded
+  push_case 2 "cd \"\$DIR\" && push -> blocked (unknown dir)" "/tmp" 'cd "$DIR" && git push'
+  push_case 0 "checkout -b feat/y && push -u origin HEAD -> allowed" "/tmp" 'git checkout -b feat/y && git push -u origin HEAD'
+  push_case 0 "checkout -- README.md && push -u origin feat/x -> allowed" "/tmp" 'git checkout -- README.md && git push -u origin feat/x'
+  push_case_repo 2 "checkout -b feat/y && cd \$SCRATCH/rm && push -> blocked (cd clears branch)" "/tmp" "git checkout -b feat/y && cd $SCRATCH/rm && git push"
+  push_case 2 "status & push origin main (bare & separator) -> blocked" "/tmp" 'git status & git push origin main'
+  push_case 2 "pushd /tmp && popd && push -> blocked (popd anywhere clears state)" "/tmp" 'pushd /tmp && popd && git push'
+  push_case 2 "checkout feat/x -- README.md && push -> blocked (path checkout, not a branch change)" "/tmp" 'git checkout feat/x -- README.md && git push'
+  push_case_repo 2 "cd -P \$SCRATCH/rm && push -> blocked (-P is an option, not the dir)" "/tmp" "cd -P $SCRATCH/rm && git push"
+  push_case_repo 2 "cd -- \$SCRATCH/rm && push -> blocked (-- is an option, not the dir)" "/tmp" "cd -- $SCRATCH/rm && git push"
+}
+
+hooks_resolution_cases() {
+  push_case_repo 2 "cwd rm: push -> blocked (current branch main)" "$SCRATCH/rm" 'git push'
+  push_case_repo 2 "cwd rm: push origin -> blocked (current branch main)" "$SCRATCH/rm" 'git push origin'
+  push_case_repo 2 "cwd rm: push -u origin HEAD -> blocked (current branch main)" "$SCRATCH/rm" 'git push -u origin HEAD'
+  push_case_repo 2 "cwd rm: checkout -- README.md && push -> blocked (unknown branch)" "$SCRATCH/rm" 'git checkout -- README.md && git push'
+  push_case_repo 0 "cwd rf: push -> allowed (feat/x, no upstream)" "$SCRATCH/rf" 'git push'
+  push_case_repo 0 "cwd rf: push -u origin HEAD -> allowed (feat/x, no upstream)" "$SCRATCH/rf" 'git push -u origin HEAD'
+  push_case_repo 2 "cwd rf: git -C \$SCRATCH/rm push -> blocked (-C wins)" "$SCRATCH/rf" "git -C $SCRATCH/rm push"
+  push_case_repo 2 "cwd ru: push -> blocked (upstream main, push.default upstream)" "$SCRATCH/ru" 'git push'
+  push_case_repo 0 "cwd rc: push -> allowed (upstream main, push.default unset)" "$SCRATCH/rc" 'git push'
+  push_case_repo 0 "cwd rm: push feat/x -> allowed (explicit slash destination)" "$SCRATCH/rm" 'git push feat/x'
+  push_case_repo 2 "cwd /tmp: checkout -b feat/y && git -C \$SCRATCH/rm push -> blocked (-C wins over tracked branch)" "/tmp" "git checkout -b feat/y && git -C $SCRATCH/rm push"
+  push_case_repo 0 "cwd /tmp: checkout -b feat/y && git -C \$SCRATCH/rf push -> allowed" "/tmp" "git checkout -b feat/y && git -C $SCRATCH/rf push"
+}
+
+hooks_speed_cases() {
+  local big seg2 i seg3 letters seg4
+  big=$(printf '%*s' 100000 '' | tr ' ' 'a')
+  speed_case 2 "100k-char token + push main -> blocked, under 1s" "/tmp" "$big && git push origin main"
+
+  seg2=""
+  i=1
+  while [ "$i" -le 5000 ]; do
+    if [ -z "$seg2" ]; then
+      seg2="echo abcd-$i"
+    else
+      seg2="$seg2 && echo abcd-$i"
+    fi
+    i=$((i + 1))
+  done
+  speed_case 2 "5000 && segments + push main -> blocked, under 1s" "/tmp" "$seg2 && git push origin main"
+
+  letters="abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+  seg3=""
+  i=1
+  while [ "$i" -le 2000 ]; do
+    if [ -z "$seg3" ]; then
+      seg3="echo line-$i-$letters"
+    else
+      seg3="$seg3
+echo line-$i-$letters"
+    fi
+    i=$((i + 1))
+  done
+  speed_case 0 "2000-line heredoc-shaped input, no push -> allowed, under 1s" "/tmp" "$seg3"
+
+  seg4=""
+  i=1
+  while [ "$i" -le 12000 ]; do
+    if [ -z "$seg4" ]; then
+      seg4="abcd-$i"
+    else
+      seg4="$seg4 abcd-$i"
+    fi
+    i=$((i + 1))
+  done
+  speed_case 2 "one ~100k-char segment (many short cd-containing tokens) + push main -> blocked, under 1s" "/tmp" "$seg4 && git push origin main"
+}
+
+hooks_input_cases() {
+  local errfile out code errtxt
+  errfile="$SCRATCH/input1.err"
+  out=$(printf '%s' 'not json' | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>"$errfile")
+  code=$?
+  errtxt=$(cat "$errfile" 2>/dev/null)
+  if [ "$code" -eq 0 ] && [ -z "$errtxt" ]; then
+    report 1 "malformed json input -> exit 0, stderr empty"
+  else
+    report 0 "malformed json input -> exit 0, stderr empty" "exit=$code err=$errtxt"
+  fi
+
+  out=$(printf '%s' '{}' | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 0 "empty json object -> exit 0"
+}
+
+hooks_secrets_new_cases() {
+  local home_dir out code
+  home_dir="$SCRATCH/base"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/certs/client.p12"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write client.p12 -> blocked"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/.netrc"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write .netrc -> blocked"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/id_dsa"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write id_dsa -> blocked"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/id_ecdsa"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write id_ecdsa -> blocked"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/terraform.tfstate"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write terraform.tfstate -> blocked"
+
+  out=$(printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x/terraform.tfstate.backup"}}' \
+    | HOME="$home_dir" "$BASH_BIN" "$HOOKS_DIR/protect-secrets.sh" 2>/dev/null)
+  code=$?
+  check_code "$code" 2 "write terraform.tfstate.backup -> blocked"
+}
+
+hooks_profile_error_case() {
+  local shimbin u p out code
+  shimbin="$SCRATCH/jqshim"
+  mkdir -p "$shimbin"
+  for u in cat sed basename dirname printf head cut tr grep; do
+    p=$(command -v "$u" 2>/dev/null) || continue
+    ln -sf "$p" "$shimbin/$u"
+  done
+  printf '#!/bin/sh\nexit 5\n' > "$shimbin/jq"
+  chmod +x "$shimbin/jq"
+
+  out=$(printf '%s' '{"cwd":"/tmp","hook_event_name":"SessionStart"}' \
+    | PATH="$shimbin" HOME="$SCRATCH/base2" CLAUDE_CONFIG_DIR="$SCRATCH/base2/.claude" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
+  code=$?
+  if [ "$code" -eq 0 ] && [ "$out" = "{}" ]; then
+    report 1 "jq present but every call fails -> stdout {}, exit 0"
+  else
+    report 0 "jq present but every call fails -> stdout {}, exit 0" "exit=$code out=$out"
+  fi
+}
+
+hooks_profile_crlf_case() {
+  local h out code
+  h="$SCRATCH/c16"
+  mkdir -p "$h/.claude"
+  printf '/tmp|%s/.claude\r\n' "$h" > "$h/.claude-profiles"
+  out=$(printf '%s' '{"cwd":"/tmp","hook_event_name":"SessionStart"}' \
+    | HOME="$h" CLAUDE_CONFIG_DIR="$h/.claude" "$BASH_BIN" "$HOOKS_DIR/profile-check.sh" 2>/dev/null)
+  code=$?
+  if [ "$code" -eq 0 ] && jqtest "$out" 'has("systemMessage") | not'; then
+    report 1 "CRLF .claude-profiles line, mapping matches active -> no systemMessage"
+  else
+    report 0 "CRLF .claude-profiles line, mapping matches active -> no systemMessage" "exit=$code out=$out"
+  fi
+}
+
 cmd_hooks() {
   [ $# -eq 0 ] || usage
   CASE_NUM=0
   HPASS=0
   HFAIL=0
+  REPOS_OK=0
   SCRATCH=$(mktemp -d)
   mkdir -p "$SCRATCH/base"
+  setup_scratch_repos
 
   hooks_push_cases
+  hooks_nested_cases
+  hooks_backslash_cases
+  hooks_options_cases
+  hooks_names_cases
+  hooks_state_cases
+  hooks_resolution_cases
+  hooks_speed_cases
+  hooks_input_cases
   hooks_secrets_cases
+  hooks_secrets_new_cases
   hooks_jq_absent_case
   hooks_profile_cases_a
   hooks_profile_cases_b
+  hooks_profile_error_case
+  hooks_profile_crlf_case
 
   printf 'hooks: %d passed, %d failed\n' "$HPASS" "$HFAIL"
   rm -rf "$SCRATCH"
