@@ -76,6 +76,7 @@ jobs:
         run: |
           npm install -g @anthropic-ai/claude-code
           claude plugin validate .
+          claude plugin validate .claude-plugin/plugin.json
 
   macos:
     name: hooks under system bash 3.2 (macos)
