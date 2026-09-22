@@ -126,5 +126,5 @@ description-length caps (`size`), a cross-file phrase-duplication check
 (`dedupe`), the `settings.example.json` / `tests/settings-keys.txt`
 cross-check, and, if `$CW_SCAN_PATTERNS` points at a pattern file, a scan for
 private strings in the tracked tree. Each subcommand also runs standalone
-(`hooks`, `size`, `dedupe`, `scan`), and CI (`.github/workflows/ci.yml`) runs
+(`hooks`, `size`, `dedupe`, `scan`, `trailers`), and CI (`.github/workflows/ci.yml`) runs
 the same `all` target on every push and PR.

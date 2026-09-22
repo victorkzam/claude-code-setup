@@ -51,9 +51,10 @@ claude plugin marketplace add victorkzam/claude-code-setup
 claude plugin install cw@claude-code-setup
 ```
 
-This installs a copy into the plugin cache
-(`~/.claude/plugins/cache/claude-code-setup/cw/`), independent of any local
-checkout. Update it with `claude plugin update cw@claude-code-setup`.
+This installs a copy into
+the plugin cache at `~/.claude/plugins/cache/claude-code-setup/cw/<version>/` (the
+version directory changes on every `claude plugin update cw@claude-code-setup`),
+independent of any local checkout.
 
 ### (c) Trial — no install at all
 
@@ -126,10 +127,10 @@ The import path depends on how you installed:
 
 - **(a) in place / (c) trial** — import from your checkout directly:
   `@<checkout>/rules/workflow.md`.
-- **(b) marketplace** — run `claude plugin details cw@claude-code-setup` to
-  print the current cache path and import from there; that path changes on
-  every `claude plugin update cw@claude-code-setup`, so re-check it after
-  updating, or keep a separate throwaway clone just for stable import paths.
+- **(b) marketplace** — print the installed path with `claude plugin list --json | jq -r
+  '.[] | select(.id=="cw@claude-code-setup") | .installPath'` and import
+  `@<that path>/rules/workflow.md`; the path changes on every update, so re-check it
+  after updating, or keep a separate throwaway clone just for stable import paths.
 
 Also set `plansDirectory: docs/plans` in your settings so `/cw:design`'s plan
 mode writes the plan file into the project instead of the default location.
@@ -185,6 +186,26 @@ Turns all three hooks off at once. This is also the answer for a repo that
 pushes to `main` by convention — `protect-branches.sh` has no opt-out
 environment variable by design, so disabling the plugin is the supported
 escape hatch, not a bypass flag on the hook itself.
+
+### What the branch guard does
+
+`protect-branches.sh` reads the text of each Bash command, splits it on shell
+separators, strips quotes and backslashes so nested `sh -c`/`bash -c`/`eval`
+strings and a backslash-escaped `git` are inspected too, and tracks `cd` and
+`git switch`/`checkout` earlier in the same command. It blocks a `git push`
+whose destination is `main`/`master` (an explicit refspec, the current
+branch, or an upstream on main), plain force pushes (`--force`, `-f`,
+`+ref`), and `--all`/`--mirror`; lease pushes (`--force-with-lease`,
+`--force-if-includes`) to a feature branch pass. When a `cd` or branch change
+earlier in the command can't be resolved from the text (a variable, `cd -`,
+a path checkout), a bare `git push` after it is blocked with a hint to use
+an explicit refspec.
+
+It is a guardrail against the agent's own accidental pushes, not a sandbox: a
+command held in a variable, `xargs`-fed refspecs, wrappers and aliases not
+named `git`, and `gh api` calls are out of scope, and a line of prose that
+spells out a push to the default branch inside a command is blocked as if it
+were the command itself — keep such text in a file instead.
 
 ## Migration from the old installer
 
@@ -243,7 +264,9 @@ and a per-commit trailer check on `main..HEAD` (skipped, and reported as
 such, only when neither `main` nor `origin/main` resolves).
 Optionally set `CW_SCAN_PATTERNS=<your private pattern file>` to also scan
 the tracked tree for private strings you've defined — this is empty by
-default and off unless you set it.
+default and off unless you set it. `.gitattributes` marks `docs/plans/**` as
+`linguist-generated`, so design documents are collapsed by default in GitHub
+diffs and excluded from language statistics.
 
 ## Changelog
 
