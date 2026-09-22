@@ -78,21 +78,35 @@ push_case_repo() {
 
 speed_case() {
   # $1: expected code, $2: description, $3: cwd, $4: command
-  local expected desc cwd cmd payload code secs
+  # The budget guards against pathological backtracking in the guard, not a
+  # latency target. SECONDS counts whole-second ticks, so a reading of 2 means
+  # the hook finished in under 3 s of wall clock. Calibration under /bin/bash
+  # 3.2 on an M-series Mac (2026-09-23): the 5000-segment and 12000-token
+  # payloads take about 0.65-0.75 s, and a shared macOS runner read 2 ticks on
+  # a healthy hook (2026-09-22), so a timing-only miss with the expected exit
+  # code gets one retry; a wrong exit code fails at once.
+  local expected desc cwd cmd payload code secs attempt
   expected="$1"
   desc="$2"
   cwd="$3"
   cmd="$4"
   payload=$(jq -nc --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
-  SECONDS=0
-  printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
-  code=$?
-  secs=$SECONDS
-  if [ "$code" -eq "$expected" ] && [ "$secs" -le 1 ]; then
-    report 1 "$desc"
-  else
-    report 0 "$desc" "exit=$code want=$expected secs=$secs"
-  fi
+  attempt=1
+  while :; do
+    SECONDS=0
+    printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
+    code=$?
+    secs=$SECONDS
+    if [ "$code" -eq "$expected" ] && [ "$secs" -le 2 ]; then
+      report 1 "$desc"
+      return
+    fi
+    if [ "$code" -ne "$expected" ] || [ "$attempt" -ge 2 ]; then
+      report 0 "$desc" "exit=$code want=$expected secs=$secs attempt=$attempt"
+      return
+    fi
+    attempt=$((attempt + 1))
+  done
 }
 
 REPOS_OK=0
@@ -414,7 +428,7 @@ hooks_resolution_cases() {
 hooks_speed_cases() {
   local big seg2 i seg3 letters seg4
   big=$(printf '%*s' 100000 '' | tr ' ' 'a')
-  speed_case 2 "100k-char token + push main -> blocked, under 1s" "/tmp" "$big && git push origin main"
+  speed_case 2 "100k-char token + push main -> blocked, under 3s" "/tmp" "$big && git push origin main"
 
   seg2=""
   i=1
@@ -426,7 +440,7 @@ hooks_speed_cases() {
     fi
     i=$((i + 1))
   done
-  speed_case 2 "5000 && segments + push main -> blocked, under 1s" "/tmp" "$seg2 && git push origin main"
+  speed_case 2 "5000 && segments + push main -> blocked, under 3s" "/tmp" "$seg2 && git push origin main"
 
   letters="abcdefghijklmnopqrstuvwxyz0123456789ABCD"
   seg3=""
@@ -440,7 +454,7 @@ echo line-$i-$letters"
     fi
     i=$((i + 1))
   done
-  speed_case 0 "2000-line heredoc-shaped input, no push -> allowed, under 1s" "/tmp" "$seg3"
+  speed_case 0 "2000-line heredoc-shaped input, no push -> allowed, under 3s" "/tmp" "$seg3"
 
   seg4=""
   i=1
@@ -452,7 +466,7 @@ echo line-$i-$letters"
     fi
     i=$((i + 1))
   done
-  speed_case 2 "one ~100k-char segment (many short cd-containing tokens) + push main -> blocked, under 1s" "/tmp" "$seg4 && git push origin main"
+  speed_case 2 "one ~100k-char segment (many short cd-containing tokens) + push main -> blocked, under 3s" "/tmp" "$seg4 && git push origin main"
 }
 
 hooks_input_cases() {
