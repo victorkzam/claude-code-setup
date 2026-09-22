@@ -1,7 +1,7 @@
 # cw — a Claude Code workflow plugin
 
 This repo *is* the Claude Code plugin `cw`: six skills, five agents, three
-hooks, two rule files, one test runner, and CI. It implements a
+hooks, three rule files, one test runner, and CI. It implements a
 `/cw:design` -> `/cw:build` -> `/cw:ship` pipeline — research-grounded
 planning, delegated implementation with one atomic commit per task, and a
 verified, gated release — plus `/cw:compound` to feed lessons back into your
@@ -132,6 +132,9 @@ The import path depends on how you installed:
   `@<that path>/rules/workflow.md`; the path changes on every update, so re-check it
   after updating, or keep a separate throwaway clone just for stable import paths.
 
+This plugin also ships `rules/browser.md`; import it the same way (optional)
+when you want Claude in Chrome browser-control conventions in your profile.
+
 Also set `plansDirectory: docs/plans` in your settings so `/cw:design`'s plan
 mode writes the plan file into the project instead of the default location.
 
@@ -161,13 +164,14 @@ for any `@import` line in `CLAUDE.md` whose target doesn't exist.
 ## settings.example.json
 
 Use `settings.example.json` as a starting point, not a drop-in replacement —
-copy it to `settings.json` and adapt it. It sets `defaultMode: "auto"`,
-`effortLevel: "high"`, `plansDirectory: "docs/plans"`, a short generic
-`permissions.deny`/`allow`/`ask` set, `autoMode.allow: ["$defaults"]`, and
-`enabledPlugins` for the official TypeScript, Python, and Swift LSP plugins
-from the `claude-plugins-official` marketplace. It carries no `hooks` key —
-this plugin registers its own hooks, and a plugin hook and a settings hook
-with the same command both fire, so don't add them again in `settings.json`.
+copy it to `settings.json` and adapt it. It sets the top-level `model`,
+`defaultMode: "auto"`, `effortLevel: "high"`, `plansDirectory: "docs/plans"`, a
+short generic `permissions.deny`/`allow`/`ask` set, `autoMode.allow:
+["$defaults"]`, and `enabledPlugins` for the official TypeScript, Python, and
+Swift LSP plugins from the `claude-plugins-official` marketplace. It carries no
+`hooks` key — this plugin registers its own hooks, and a plugin hook and a
+settings hook with the same command both fire, so don't add them again in
+`settings.json`.
 
 **What to adapt**: the `permissions.allow`/`deny` lists for your own
 workflow, the model alias mappings in `rules/orchestration.md` if you have
@@ -207,10 +211,10 @@ instead of silently reverting.
 
 It is a guardrail against the agent's own accidental pushes, not a sandbox: a
 command held in a variable, `xargs`-fed refspecs, wrappers and aliases not
-named `git`, `git -c k="v w"` before push, and `gh api` calls are out of
-scope, and a line of prose that spells out a push to the default branch
-inside a command is blocked as if it
-were the command itself — keep such text in a file instead.
+named `git`, `git -c k="v w"` before push, and `gh api` calls are out of scope,
+and a line of prose that spells out a push to the default branch inside a
+command is blocked as if it were the command itself — keep such text in a file
+instead.
 
 ## Migration from the old installer
 
