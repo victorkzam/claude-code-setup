@@ -438,10 +438,9 @@ commit, run `N=$(sed -n 's/^Copyright (c) [0-9]* //p' LICENSE | cut -d' ' -f1); 
 `rules/workflow.md` and no session line; check it right after committing. Then stage the
 two out-of-repo aids the gates use, into `~/.claude/plans/cw-plugin-gates/` (private,
 already holds the release-gate scripts): `repro-hooks.sh` and `shellcheck-0.9.0`, copied
-from the design session's scratchpad (under `/private/tmp/claude-501/`, this
-project's directory, session `d64245ad-2e4a-4ac3-992e-f237c756a53a`, `scratchpad/`;
-the path is not spelled out here because the project directory name would trip the
-name gate): `repro-hooks.sh` and `sc090/shellcheck-v0.9.0/shellcheck`. If that
+from the design session's scratchpad (the session-specific temp directory of this
+project; the path is not spelled out here because the project directory name would
+trip the name gate): `repro-hooks.sh` and `sc090/shellcheck-v0.9.0/shellcheck`. If that
 directory is gone,
 the binary comes from
 `https://github.com/koalaman/shellcheck/releases/download/v0.9.0/shellcheck-v0.9.0.darwin.x86_64.tar.xz`
