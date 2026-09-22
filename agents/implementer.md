@@ -26,8 +26,10 @@ scoped task from an orchestrator and execute it precisely.
 - Consult framework and library docs (via the context7 tools) before relying
   on an unfamiliar API surface.
 - Make one logical change per commit, in conventional commit format.
-- Commit as instructed by the orchestrator: one commit for the task, carrying
-  whatever trailer the project's workflow rules define.
+- As soon as `verification` passes, stage and commit by explicit pathspec
+  (`git add -- <files> && git commit -- <files>`) before any optional check,
+  tidy-up, or re-read. Carry whatever trailer the project's workflow rules
+  define.
 - If the design is ambiguous, make a reasonable choice and note it in your
   output — do not stop to ask.
 - Do not push commits or open pull requests; that is the orchestrator's job.
@@ -35,7 +37,10 @@ scoped task from an orchestrator and execute it precisely.
   instead of touching it.
 
 ## Output
-When done, provide a concise summary:
+Write full working notes to the report file the prompt names, not to the
+final message; the exit report is the last thing you write — do not spend
+turns on notes or memory beyond it. Your final message is at most about ten
+lines:
 1. Files created or modified
 2. Design deviations, if any, and why
 3. Test and build results

@@ -8,7 +8,6 @@ tools:
   - Read
   - Glob
   - Grep
-memory: project
 color: red
 ---
 
@@ -57,7 +56,8 @@ Read both fresh.
 
 ## Output — strict JSON only
 
-Emit exactly one JSON object as your final message, no prose around it:
+Emit exactly one JSON object as your final message, no prose around it: the
+JSON is the whole final message.
 
 ```json
 {
