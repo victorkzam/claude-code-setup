@@ -100,6 +100,10 @@ single trailer line as the rest of the series.
    ## Design Reference
    docs/plans/<slug>.md
    ```
+   Write the body to a file in the scratchpad and pass it with
+   `--body-file <file>`: the branch guard reads Bash command text, and a body
+   that mentions a push to `main` inline would be blocked as if it were the
+   command.
 3. Report the PR URL.
 
 ## Step 6: Offer `/cw:compound`

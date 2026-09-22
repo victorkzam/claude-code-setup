@@ -15,7 +15,7 @@ routing and workflow usage follow the orchestration rules.
 - `/cw:design` runs in plan mode; on approval the single plan file moves to the
   project's `docs/plans/<slug>.md`, which is the canonical copy. In a folder
   that is not a repo the file stays where plan mode put it.
-- `/cw:build <slug> [continue [<task-id>]]` reads the `## Tasks` section of that
+- `/cw:build <slug> [continue [<task-id>]]` reads the `## Task <id>` blocks of that
   file, commits the design as `docs(<slug>): design`, delegates every change to
   an implementer, and stops at the checkpoint before the PR.
 - `/cw:ship` runs the quality gate, pushes the branch, opens the PR, and ends by

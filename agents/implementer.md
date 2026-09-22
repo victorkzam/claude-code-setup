@@ -40,3 +40,5 @@ When done, provide a concise summary:
 2. Design deviations, if any, and why
 3. Test and build results
 4. Known limitations or TODOs
+5. When the orchestrator's prompt specifies an exit report, end with that
+   fenced JSON block exactly as specified — the build gate parses it.
