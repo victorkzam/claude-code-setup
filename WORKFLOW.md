@@ -22,8 +22,14 @@ closes the loop by feeding lessons back into project rules.
 Plan mode. Reads project context, spawns `Explore` (haiku) and
 `cw:researcher` (sonnet) subagents in parallel to ground the plan in the real
 codebase and current sources, drafts one plan file with a task list, then
-loops `cw:design-reviewer` (fresh context each pass, until findings converge,
-escalating after 5 iterations) followed by `cw:direction-reviewer` once.
+loops `cw:design-reviewer` — fresh context each pass, two rounds by default, a
+third only after a verified critical finding survives round two — followed by
+`cw:direction-reviewer` once, but only when the design is architectural (a new
+subsystem, a public interface or schema, or a change to the loop itself).
+`/cw:design <description> lite` trims this to one research angle, one review
+round and no direction pass, for a fix-up touching three files or fewer. A
+review round with no parseable verdict follows the stall ladder in
+`rules/orchestration.md` rather than a blind retry.
 
 The skill calls `ExitPlanMode` itself when the review loop converges — that
 approval only ends drafting; it is not the real checkpoint. Plan mode writes
@@ -54,8 +60,8 @@ itself a permission mode). The orchestrating session:
 5. Spawns `cw:reviewer` — a different model tier than the implementer used —
    to review the diff fresh from disk. `NEEDS_WORK` respawns a new
    implementer with the feedback (up to 2 retries); a reviewer that returns
-   no parseable verdict at all is retried once fresh, not treated as a pass
-   or a fail.
+   no parseable verdict is neither a pass nor a fail — it follows the stall
+   ladder in `rules/orchestration.md` and never consumes a review iteration.
 6. Stops for your approval once every task's commit is in and the tasks-file
    quality gate passes.
 
@@ -99,13 +105,14 @@ driving Google Docs/Drive from Claude, triggered when a task needs one.
 format, checkpoints, mode transitions) and is meant to be imported by a
 profile's `CLAUDE.md`. `rules/orchestration.md` carries the model-routing
 table (public aliases, route-up-for-hard-work, the workflow-fan-out
-threshold) and the review-loop semantics (`NO_VERDICT` vs `NEEDS_WORK`,
-counter-model review, ground-truth verification). If a rule and this file
-ever disagree, the rules file wins.
+threshold) and the review-loop semantics (the stall ladder for a missing or
+unparseable verdict, distinct from `NEEDS_WORK`, counter-model review,
+ground-truth verification). If a rule and this file ever disagree, the rules
+file wins.
 
 ## Hooks
 
-Three hooks, registered by the plugin itself (`hooks/hooks.json`), fire in
+Four hooks, registered by the plugin itself (`hooks/hooks.json`), fire in
 every session the plugin is enabled in:
 
 | Hook | Event | What it does |
@@ -113,10 +120,11 @@ every session the plugin is enabled in:
 | `protect-branches.sh` | PreToolUse (Bash) | Blocks a push whose destination is main/master, and any force push |
 | `protect-secrets.sh` | PreToolUse (Write\|Edit\|MultiEdit\|NotebookEdit) | Blocks writes to `.env`, credentials, keys, and similar secret paths |
 | `profile-check.sh` | SessionStart | Warns if the active profile doesn't match `~/.claude-profiles`, or if a `CLAUDE.md` `@import` target is missing |
+| `notify.sh` | Notification, Stop, StopFailure | Opt-in desktop notifier, gated on `cw-notify.json` — see README's Notifications section |
 
 A hook that exits non-zero is enforced, not advisory — CLAUDE.md conventions
 get followed inconsistently; a `PreToolUse` hook that exits 2 blocks the call
-outright. `claude plugin disable cw@<source>` turns all three off at once.
+outright. `claude plugin disable cw@<source>` turns all four off at once.
 
 ## Tests
 

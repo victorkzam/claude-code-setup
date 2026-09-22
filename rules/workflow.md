@@ -12,9 +12,11 @@ routing and workflow usage follow the orchestration rules.
   Co-Authored-By: Claude <noreply@anthropic.com>
 - No implementation without an approved design. If uncertain, ask first.
 - Two human checkpoints, both non-negotiable: after the design, before the PR.
-- `/cw:design` runs in plan mode; on approval the single plan file moves to the
-  project's `docs/plans/<slug>.md`, which is the canonical copy. In a folder
-  that is not a repo the file stays where plan mode put it.
+- `/cw:design [lite] <description>` runs in plan mode; on approval the single
+  plan file moves to the project's `docs/plans/<slug>.md`, which is the
+  canonical copy (in a folder that is not a repo the file stays where plan
+  mode put it). `lite` is the last token, stripped before the slug is
+  derived: Explore only, one review round, no direction pass — for fix-ups.
 - `/cw:build <slug> [continue [<task-id>]]` reads the `## Task <id>` blocks of that
   file, commits the design as `docs(<slug>): design`, delegates every change to
   an implementer, and stops at the checkpoint before the PR.
@@ -34,5 +36,5 @@ routing and workflow usage follow the orchestration rules.
 ## Context hygiene
 - Use subagents for tasks whose output would bloat the main context:
   exploration, review, large diffs.
-- Suggest `/clear` between unrelated tasks.
+- Suggest `/clear` between phases, not only between unrelated tasks.
 - For large features, suggest one session per phase.

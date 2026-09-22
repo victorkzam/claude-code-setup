@@ -3,7 +3,7 @@ name: design-reviewer
 description: "Reviews a finalized design draft against the real codebase, current web best practices, and internal consistency. Returns a strict JSON verdict. Read-only — cannot modify files. Used by the /cw:design auto-review loop."
 model: opus
 effort: high
-maxTurns: 25
+maxTurns: 40
 tools:
   - Read
   - Glob
@@ -15,7 +15,6 @@ tools:
   - mcp__context7__resolve-library-id
   - mcp__context7__query-docs
   - Skill
-memory: project
 color: purple
 ---
 
@@ -61,6 +60,14 @@ the prompt.
 - Only raise an issue you can back with evidence; if the design is sound,
   say PASS.
 
+## Budget
+Your turn budget is finite and stated in the prompt; you have no write tool,
+so there is no report file — keep a running list of confirmed issues in your
+own reasoning as you go. Emit the JSON verdict once every method step is
+done, or once roughly two thirds of the budget is spent, whichever comes
+first. A step you did not reach goes under `unchecked`, not silently
+dropped.
+
 ## Output — strict JSON only
 
 Emit exactly one JSON object as your final message, no prose around it:
@@ -76,6 +83,7 @@ Emit exactly one JSON object as your final message, no prose around it:
       "evidence": "file:line, citation, or contradiction location"
     }
   ],
+  "unchecked": ["method step or claim not reached before the budget cutoff"],
   "suggested_fixes": ["concrete, ordered fixes the orchestrator can apply"]
 }
 ```

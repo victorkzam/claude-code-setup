@@ -113,7 +113,8 @@ Ask once, after the URL:
 > rules files? `/cw:compound` proposes edits for your approval and keeps them
 > out of this PR."
 
-Hand off if the user agrees; otherwise end here.
+Hand off if the user agrees; otherwise end here. Start `/cw:compound` or the
+next design in a fresh session — compaction drops policy rules mid-window.
 
 ## Safety rules
 - Do not push directly to main or master, and do not force-push any branch.

@@ -1,6 +1,6 @@
 {
   "name": "cw",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Claude Code workflow plugin: design/build/ship skills, orchestration agents, and guardrail hooks.",
   "author": {
     "name": "Victor Kzam"

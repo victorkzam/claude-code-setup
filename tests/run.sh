@@ -78,21 +78,35 @@ push_case_repo() {
 
 speed_case() {
   # $1: expected code, $2: description, $3: cwd, $4: command
-  local expected desc cwd cmd payload code secs
+  # The budget guards against pathological backtracking in the guard, not a
+  # latency target. SECONDS counts whole-second ticks, so a reading of 2 means
+  # the hook finished in under 3 s of wall clock. Calibration under /bin/bash
+  # 3.2 on an M-series Mac (2026-09-23): the 5000-segment and 12000-token
+  # payloads take about 0.65-0.75 s, and a shared macOS runner read 2 ticks on
+  # a healthy hook (2026-09-22), so a timing-only miss with the expected exit
+  # code gets one retry; a wrong exit code fails at once.
+  local expected desc cwd cmd payload code secs attempt
   expected="$1"
   desc="$2"
   cwd="$3"
   cmd="$4"
   payload=$(jq -nc --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')
-  SECONDS=0
-  printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
-  code=$?
-  secs=$SECONDS
-  if [ "$code" -eq "$expected" ] && [ "$secs" -le 1 ]; then
-    report 1 "$desc"
-  else
-    report 0 "$desc" "exit=$code want=$expected secs=$secs"
-  fi
+  attempt=1
+  while :; do
+    SECONDS=0
+    printf '%s' "$payload" | HOME="$SCRATCH/base" "$BASH_BIN" "$HOOKS_DIR/protect-branches.sh" >/dev/null 2>&1
+    code=$?
+    secs=$SECONDS
+    if [ "$code" -eq "$expected" ] && [ "$secs" -le 2 ]; then
+      report 1 "$desc"
+      return
+    fi
+    if [ "$code" -ne "$expected" ] || [ "$attempt" -ge 2 ]; then
+      report 0 "$desc" "exit=$code want=$expected secs=$secs attempt=$attempt"
+      return
+    fi
+    attempt=$((attempt + 1))
+  done
 }
 
 REPOS_OK=0
@@ -414,7 +428,7 @@ hooks_resolution_cases() {
 hooks_speed_cases() {
   local big seg2 i seg3 letters seg4
   big=$(printf '%*s' 100000 '' | tr ' ' 'a')
-  speed_case 2 "100k-char token + push main -> blocked, under 1s" "/tmp" "$big && git push origin main"
+  speed_case 2 "100k-char token + push main -> blocked, under 3s" "/tmp" "$big && git push origin main"
 
   seg2=""
   i=1
@@ -426,7 +440,7 @@ hooks_speed_cases() {
     fi
     i=$((i + 1))
   done
-  speed_case 2 "5000 && segments + push main -> blocked, under 1s" "/tmp" "$seg2 && git push origin main"
+  speed_case 2 "5000 && segments + push main -> blocked, under 3s" "/tmp" "$seg2 && git push origin main"
 
   letters="abcdefghijklmnopqrstuvwxyz0123456789ABCD"
   seg3=""
@@ -440,7 +454,7 @@ echo line-$i-$letters"
     fi
     i=$((i + 1))
   done
-  speed_case 0 "2000-line heredoc-shaped input, no push -> allowed, under 1s" "/tmp" "$seg3"
+  speed_case 0 "2000-line heredoc-shaped input, no push -> allowed, under 3s" "/tmp" "$seg3"
 
   seg4=""
   i=1
@@ -452,7 +466,7 @@ echo line-$i-$letters"
     fi
     i=$((i + 1))
   done
-  speed_case 2 "one ~100k-char segment (many short cd-containing tokens) + push main -> blocked, under 1s" "/tmp" "$seg4 && git push origin main"
+  speed_case 2 "one ~100k-char segment (many short cd-containing tokens) + push main -> blocked, under 3s" "/tmp" "$seg4 && git push origin main"
 }
 
 hooks_input_cases() {
@@ -543,6 +557,329 @@ hooks_profile_crlf_case() {
   fi
 }
 
+notify_case() {
+  # $1: 1=expect one output line containing $2, 0=expect silent
+  # $2: needle (ignored when $1=0), $3: description, $4: payload JSON
+  # $5..: EXTRA NAME=VAL overrides (applied after, and so overriding, the
+  # base env below; later duplicate assignments win under `env`)
+  local expect needle desc payload code out err lines errfile
+  expect="$1"
+  needle="$2"
+  desc="$3"
+  payload="$4"
+  shift 4
+  errfile=$(mktemp)
+  out=$(printf '%s' "$payload" | env \
+    CW_NOTIFY_DRY_RUN=1 \
+    CW_NOTIFY_STATE_DIR="$SCRATCH/notify" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg" \
+    CLAUDE_PID=4242 \
+    CLAUDE_CODE_ENTRYPOINT=cli \
+    HOME="$SCRATCH/base" \
+    "$@" \
+    "$BASH_BIN" "$HOOKS_DIR/notify.sh" 2>"$errfile")
+  code=$?
+  err=$(cat "$errfile" 2>/dev/null)
+  rm -f "$errfile"
+  if [ "$code" -ne 0 ]; then
+    report 0 "$desc" "exit=$code"
+    return
+  fi
+  if [ -n "$err" ]; then
+    report 0 "$desc" "stderr: $err"
+    return
+  fi
+  if [ "$expect" -eq 0 ]; then
+    if [ -z "$out" ]; then
+      report 1 "$desc"
+    else
+      report 0 "$desc" "expected silent, got: $out"
+    fi
+  else
+    lines=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
+    if [ -n "$out" ] && [ "$lines" -eq 1 ] && printf '%s' "$out" | grep -F -q -- "$needle"; then
+      report 1 "$desc"
+    else
+      report 0 "$desc" "out=$out lines=$lines"
+    fi
+  fi
+}
+
+notify_state_field_case() {
+  # $1: state file basename (under $SCRATCH/notify), $2: expected first
+  # field, $3: description
+  local val
+  val=$(awk '{print $1; exit}' "$SCRATCH/notify/$1" 2>/dev/null)
+  if [ "$val" = "$2" ]; then
+    report 1 "$3"
+  else
+    report 0 "$3" "got: $val (file: $SCRATCH/notify/$1)"
+  fi
+}
+
+hooks_notify_cases() {
+  local p msg
+
+  mkdir -p "$SCRATCH/cfg/sessions" "$SCRATCH/proj" "$SCRATCH/notify"
+  printf '%s' '{}' > "$SCRATCH/cfg/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" \
+    '{name:"proj-a0", cwd:$cwd, bridgeSessionId:null}' \
+    > "$SCRATCH/cfg/sessions/4242.json"
+
+  # 1-4: silent notification types
+  p=$(jq -nc '{hook_event_name:"Notification",notification_type:"agent_completed",session_id:"n01"}')
+  notify_case 0 "" "agent_completed -> silent" "$p"
+  p=$(jq -nc '{hook_event_name:"Notification",notification_type:"auth_success",session_id:"n02"}')
+  notify_case 0 "" "auth_success -> silent" "$p"
+  p=$(jq -nc '{hook_event_name:"Notification",notification_type:"quota_auto_resume_fired",session_id:"n03"}')
+  notify_case 0 "" "quota_auto_resume_fired -> silent" "$p"
+  p=$(jq -nc '{hook_event_name:"Notification",notification_type:"computer_use_enter",session_id:"n04"}')
+  notify_case 0 "" "computer_use_enter -> silent" "$p"
+
+  # 5: permission_prompt -> titled ping
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n05",cwd:$cwd}')
+  notify_case 1 "proj · a0 | Permission needed" "permission_prompt -> title + message" "$p"
+
+  # 6: permission_prompt inside a sub-agent
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n06",cwd:$cwd,agent_id:"a1",agent_type:"reviewer"}')
+  notify_case 1 "agent: reviewer" "permission_prompt with agent_id -> agent-named message" "$p"
+
+  # 7: worker_permission_prompt, no agent_id
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"worker_permission_prompt",session_id:"n07",cwd:$cwd}')
+  notify_case 1 "Permission needed (worker)" "worker_permission_prompt, no agent_id -> worker message" "$p"
+
+  # 8: agent_needs_input inside a sub-agent -> silent (only the two
+  # permission types pass inside a sub-agent)
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"agent_needs_input",session_id:"n08",cwd:$cwd,agent_id:"a1",agent_type:"reviewer"}')
+  notify_case 0 "" "agent_needs_input with agent_id -> silent" "$p"
+
+  # 9: agent_needs_input with a message
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"agent_needs_input",session_id:"n09",cwd:$cwd,message:"Need a choice"}')
+  notify_case 1 "Need a choice" "agent_needs_input with message -> message text" "$p"
+
+  # 10: push_notification message carrying a quote, a backslash and an
+  # embedded newline -> sanitised to one output line, both halves surviving
+  msg=$'line one "quoted" \\ backslash\nline two'
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" --arg msg "$msg" \
+    '{hook_event_name:"Notification",notification_type:"push_notification",session_id:"n10",cwd:$cwd,message:$msg}')
+  notify_case 1 'line one "quoted" \ backslash line two' "push_notification message with quote/backslash/newline -> one line" "$p"
+
+  # 11: elicitation_dialog
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"elicitation_dialog",session_id:"n11",cwd:$cwd}')
+  notify_case 1 "Input needed" "elicitation_dialog -> Input needed" "$p"
+
+  # 12-13: Stop with one background task gates the paired idle_prompt
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"n12",background_tasks:["x"]}')
+  notify_case 0 "" "Stop with background_tasks -> silent" "$p"
+  notify_state_field_case "n12.bg" "1" "Stop background_tasks state -> first field 1"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n12",cwd:$cwd}')
+  notify_case 0 "" "idle_prompt, same session, bg count 1 -> silent" "$p"
+
+  # 14-15: Stop with zero background tasks lets the paired idle_prompt ping
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"n14",background_tasks:[]}')
+  notify_case 0 "" "Stop with empty background_tasks -> silent" "$p"
+  notify_state_field_case "n14.bg" "0" "Stop empty background_tasks state -> first field 0"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n14",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt, same session, bg count 0 -> ping" "$p"
+
+  # 16: idle_prompt, fresh session, no state file at all -> fail open, ping
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n16",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt, fresh session, no state file -> ping" "$p"
+
+  # 17: Stop with the background_tasks field entirely absent
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"n17"}')
+  notify_case 0 "" "Stop with background_tasks absent -> silent" "$p"
+  notify_state_field_case "n17.bg" "0" "Stop absent background_tasks state -> first field 0"
+
+  # 18: StopFailure records 0 regardless, paired idle_prompt pings
+  p=$(jq -nc '{hook_event_name:"StopFailure",session_id:"n18"}')
+  notify_case 0 "" "StopFailure, fresh session -> silent" "$p"
+  notify_state_field_case "n18.bg" "0" "StopFailure state -> first field 0"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n18",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt after StopFailure -> ping" "$p"
+
+  # 19: a stale bg record (older than stale_seconds) fails open -> ping
+  printf '3 %s\n' "$(($(date +%s) - 7200))" > "$SCRATCH/notify/n19.bg"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n19",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt with a stale bg record -> fail open, ping" "$p"
+
+  # 20: registry file absent -> title is the folder alone
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n20",cwd:$cwd}')
+  notify_case 1 "proj |" "registry absent -> title is folder alone" "$p" CLAUDE_PID=99999
+
+  # 21: registry name not prefixed by the folder -> "<folder> · <name>"
+  mkdir -p "$SCRATCH/cfg21/sessions"
+  printf '%s' '{}' > "$SCRATCH/cfg21/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" \
+    '{name:"mysession", cwd:$cwd, bridgeSessionId:null}' \
+    > "$SCRATCH/cfg21/sessions/4242.json"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n21",cwd:$cwd}')
+  notify_case 1 "proj · mysession" "registry name not folder-prefixed -> folder · name" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg21"
+
+  # 22-24: presence routing. The override is read before any OS probe, so
+  # these three run identically on every platform.
+  mkdir -p "$SCRATCH/cfg22/sessions" "$SCRATCH/cfg23/sessions" "$SCRATCH/cfg24/sessions"
+  printf '%s' '{"presence":true}' > "$SCRATCH/cfg22/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" '{name:"proj-a0", cwd:$cwd, bridgeSessionId:"b1"}' \
+    > "$SCRATCH/cfg22/sessions/4242.json"
+  printf '%s' '{"presence":true}' > "$SCRATCH/cfg23/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" '{name:"proj-a0", cwd:$cwd, bridgeSessionId:null}' \
+    > "$SCRATCH/cfg23/sessions/4242.json"
+  printf '%s' '{}' > "$SCRATCH/cfg24/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" '{name:"proj-a0", cwd:$cwd, bridgeSessionId:"b1"}' \
+    > "$SCRATCH/cfg24/sessions/4242.json"
+  printf '0 %s\n' "$(date +%s)" > "$SCRATCH/notify/n22.bg"
+  printf '0 %s\n' "$(date +%s)" > "$SCRATCH/notify/n23.bg"
+  printf '0 %s\n' "$(date +%s)" > "$SCRATCH/notify/n24.bg"
+
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n22",cwd:$cwd}')
+  notify_case 0 "" "presence on, away, bridge id present -> silent" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg22" CW_NOTIFY_PRESENCE=away
+
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n23",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "presence on, away, no bridge id -> ping" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg23" CW_NOTIFY_PRESENCE=away
+
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n24",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "presence off by default, away, bridge id present -> ping" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg24" CW_NOTIFY_PRESENCE=away
+
+  # 25: headless guard, entrypoint not in the allowlist -> silent
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n25",cwd:$cwd}')
+  notify_case 0 "" "CLAUDE_CODE_ENTRYPOINT=sdk-cli -> silent" "$p" CLAUDE_CODE_ENTRYPOINT=sdk-cli
+
+  # 26: kill switch
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n26",cwd:$cwd}')
+  notify_case 0 "" "CW_NOTIFY=0 -> silent" "$p" CW_NOTIFY=0
+
+  # 27: config file absent -> silent (opt-in gate)
+  mkdir -p "$SCRATCH/cfg27"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n27",cwd:$cwd}')
+  notify_case 0 "" "config file absent -> silent" "$p" CLAUDE_CONFIG_DIR="$SCRATCH/cfg27"
+
+  # 28: config present but enabled:false
+  mkdir -p "$SCRATCH/cfg28"
+  printf '%s' '{"enabled":false}' > "$SCRATCH/cfg28/cw-notify.json"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n28",cwd:$cwd}')
+  notify_case 0 "" "config enabled:false -> silent" "$p" CLAUDE_CONFIG_DIR="$SCRATCH/cfg28"
+
+  # 29: malformed stdin -> exit 0, silent
+  notify_case 0 "" "malformed stdin -> exit 0, silent" "not json"
+
+  # 30: jq absent from PATH -> exit 0, silent
+  local nojq_bin u pth
+  nojq_bin="$SCRATCH/notify_nojq_bin"
+  mkdir -p "$nojq_bin"
+  for u in bash sh cat tr sed grep basename dirname printf readlink realpath cut head; do
+    pth=$(command -v "$u" 2>/dev/null) || continue
+    ln -sf "$pth" "$nojq_bin/$u"
+  done
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n30",cwd:$cwd}')
+  notify_case 0 "" "jq absent -> exit 0, silent" "$p" PATH="$nojq_bin"
+
+  # 31: hooks.json shape
+  if jq -e '.hooks.PreToolUse|length==2' "$ROOT/hooks/hooks.json" >/dev/null 2>&1 && \
+     jq -e '.hooks.Notification[0].matcher == "permission_prompt|worker_permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|push_notification|idle_prompt" and (.hooks.Stop|length)==1 and (.hooks.StopFailure|length)==1' \
+       "$ROOT/hooks/hooks.json" >/dev/null 2>&1; then
+    report 1 "hooks.json: Notification/Stop/StopFailure bindings present"
+  else
+    report 0 "hooks.json: Notification/Stop/StopFailure bindings present" "jq -e check failed"
+  fi
+
+  # 32: CW_NOTIFY_STATE_DIR pointing at a regular file -> Stop fails open
+  # silently, the paired idle_prompt still pings
+  local badfile
+  badfile="$SCRATCH/notify_badfile"
+  : > "$badfile"
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"n32",background_tasks:["x"]}')
+  notify_case 0 "" "Stop with CW_NOTIFY_STATE_DIR as a regular file -> silent" "$p" \
+    CW_NOTIFY_STATE_DIR="$badfile"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n32",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt after Stop-with-bad-state-dir -> fail open, ping" "$p" \
+    CW_NOTIFY_STATE_DIR="$badfile"
+
+  # 33: background_tasks as a string (not an array) -> length-of-string bug
+  # must not leak through; state records 0
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"n33",background_tasks:"abc"}')
+  notify_case 0 "" "Stop with background_tasks as a string -> silent" "$p"
+  notify_state_field_case "n33.bg" "0" "Stop background_tasks string -> first field 0"
+
+  # 34: session_id path traversal -> sanitised before it reaches a path, no
+  # write escapes the state dir. The target dir must pre-exist so the check
+  # is real: without it, a pre-fix script's write would fail on a missing
+  # directory regardless of the sanitiser, and the case could never fail.
+  mkdir -p "$SCRATCH/outside"
+  p=$(jq -nc '{hook_event_name:"Stop",session_id:"../outside/pwned",background_tasks:["x"]}')
+  notify_case 0 "" "Stop with path-traversal session_id -> silent" "$p"
+  if [ -e "$SCRATCH/outside/pwned.bg" ]; then
+    report 0 "path-traversal session_id -> no state file written outside the state dir" \
+      "file exists: $SCRATCH/outside/pwned.bg"
+  else
+    report 1 "path-traversal session_id -> no state file written outside the state dir"
+  fi
+
+  # 35: a hand-written record with a leading zero (bash would read it as
+  # octal in arithmetic) must fail open rather than error out
+  printf '1 09\n' > "$SCRATCH/notify/n35.bg"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"idle_prompt",session_id:"n35",cwd:$cwd}')
+  notify_case 1 "Waiting for your input" "idle_prompt with a leading-zero bg record -> fail open, ping" "$p"
+
+  # 36: registry name with an embedded newline -> title sanitised to one line
+  mkdir -p "$SCRATCH/cfg36/sessions"
+  printf '%s' '{}' > "$SCRATCH/cfg36/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" --arg name "$(printf 'mysession\nrogue')" \
+    '{name:$name, cwd:$cwd, bridgeSessionId:null}' \
+    > "$SCRATCH/cfg36/sessions/4242.json"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n36",cwd:$cwd}')
+  notify_case 1 "proj · mysession rogue" "registry name with embedded newline -> title sanitised to one line" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg36"
+
+  # 37: locale-independent sanitiser -> a permission_prompt title keeps the
+  # middot with LANG, LC_ALL and LC_CTYPE cleared (regression: tr -c
+  # '[:print:]' without a locale turns the middot into a space and the
+  # title degrades from "proj · a0" to "proj a0")
+  mkdir -p "$SCRATCH/cfg37/sessions"
+  printf '%s' '{}' > "$SCRATCH/cfg37/cw-notify.json"
+  jq -n --arg cwd "$SCRATCH/proj" --arg name "a0" \
+    '{name:$name, cwd:$cwd, bridgeSessionId:null}' \
+    > "$SCRATCH/cfg37/sessions/4242.json"
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" \
+    '{hook_event_name:"Notification",notification_type:"permission_prompt",session_id:"n37",cwd:$cwd}')
+  notify_case 1 "proj · a0 | Permission needed" \
+    "permission_prompt with LANG/LC_ALL/LC_CTYPE cleared -> title keeps the middot" "$p" \
+    CLAUDE_CONFIG_DIR="$SCRATCH/cfg37" LANG= LC_ALL= LC_CTYPE=
+
+  # 38: multibyte UTF-8 in the message survives the sanitiser untouched
+  p=$(jq -nc --arg cwd "$SCRATCH/proj" --arg msg "café — 日本 ✓" \
+    '{hook_event_name:"Notification",notification_type:"push_notification",session_id:"n38",cwd:$cwd,message:$msg}')
+  notify_case 1 "café — 日本 ✓" "push_notification with multibyte message -> UTF-8 preserved" "$p"
+}
+
 cmd_hooks() {
   [ $# -eq 0 ] || usage
   CASE_NUM=0
@@ -569,6 +906,7 @@ cmd_hooks() {
   hooks_profile_cases_b
   hooks_profile_error_case
   hooks_profile_crlf_case
+  hooks_notify_cases
 
   printf 'hooks: %d passed, %d failed\n' "$HPASS" "$HFAIL"
   rm -rf "$SCRATCH"

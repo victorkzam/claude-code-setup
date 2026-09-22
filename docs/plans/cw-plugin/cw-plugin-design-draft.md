@@ -34,7 +34,7 @@ row 6); profile-check never exits 2 (§R2.5); `disallowed-tools` on `/cw:build` 
 delegate guard (§R2.6, §R3 row 7); marketplace name distinct from the plugin name (§R3 row 4);
 `claude plugin validate` in CI (§R3 row 5).
 Rev 2 (2026-09-16) after review round 1 (direction PASS with advisories; design-reviewer
-NO_VERDICT once, re-nudged; completeness NEEDS_WORK). Verified and folded: the scrub check
+returned no parseable verdict once, re-nudged; completeness NEEDS_WORK). Verified and folded: the scrub check
 would have matched the committed artifacts (the name is now derived from `LICENSE` at check
 time); P0 lacked the artifact write and forbade it with a clean-tree check (Step 6 of `/design`
 writes the set; the check tolerates it); `disallowed-tools` is scoped to the invoking turn
@@ -163,7 +163,7 @@ inherits lives in `rules/`, and the hooks enforce the hard ones regardless of im
 | one atomic commit per task | build |
 | co-author trailer (`Co-Authored-By`) | `rules/workflow.md` (build refers to "the trailer the workflow rules define") |
 | PR only after the gate | ship |
-| NO_VERDICT handling | `rules/orchestration.md` |
+| unparseable-verdict handling (the stall ladder) | `rules/orchestration.md` |
 | ground truth over testimony | `rules/orchestration.md` |
 | fresh-context counter-model reviewer | `rules/orchestration.md` |
 | same-turn spawn | `rules/orchestration.md` |
@@ -278,7 +278,7 @@ promotion, no mirror. Its Explore calls keep `model: haiku`. `/cw:build <slug> [
 `docs/plans/<slug>/<slug>-tasks.md` with `<slug>-design-draft.md` beside it (the layout this
 build uses), commits the design file(s) as `docs(<slug>): design` through git when untracked
 or modified (no `.gitattributes` write), hands each implementer only its task block, keeps the
-ground-truth gate, counter-model review, NO_VERDICT retry and three iterations, and states
+ground-truth gate, counter-model review, unparseable-verdict retry and three iterations, and states
 the delegation boundary in one sentence (the orchestrator edits no file; every change is an
 implementer's) backed by the review gate — no guard hook and no tool restriction: the P0
 probe showed that `disallowed-tools` on a skill also strips the tools from the subagents it
@@ -553,3 +553,28 @@ T6 README (with the changelog), WORKFLOW, project CLAUDE.md, example settings, s
 commits) → `/ship` (gate from the project CLAUDE.md; the `*secret*` match waved through) → CI
 → merge on GitHub → post-merge marketplace install check → `git switch main && git pull` →
 plan A. Cut line per D2.10.
+
+## Release 1.0.1
+
+Why: measured stalls and notification noise from 1.0.0's first week. Deep reviewers on the
+old 20-turn cap ended without a parseable verdict in 4 of 4 runs on 2026-09-21 and 2 of 4 on
+2026-09-22; every one recovered with a single nudge, never a respawn — so the fix is more
+turns plus a documented ladder, not a different model. One design session measured about
+1.6M sub-agent tokens plus a full orchestrator window, motivating the `lite` path and the
+two-round-by-default cap. The prior user-level `Notification` hook produced 110 banners in
+one day, 62% of them `idle_prompt` firing while background agents still ran, motivating the
+notifier's background-task gate.
+
+What changed:
+- Turn caps: `cw:reviewer` and `cw:design-reviewer` 40 (up from 20), `cw:direction-reviewer`
+  15, `cw:implementer` 50, `cw:researcher` 30. The three reviewer agents drop `memory` from
+  their frontmatter — findings live in the report file, not agent memory.
+- `/cw:design` review loop: two `cw:design-reviewer` rounds by default (a third only after a
+  verified critical finding survives round two), a `lite` flag for fix-ups (one research
+  angle, one review round, no direction pass), and the direction pass now runs only when
+  Step 1 records `architectural: yes`. A missing or unparseable verdict follows the stall
+  ladder in `rules/orchestration.md` (nudge, nudge, respawn, escalate) instead of a blind
+  retry.
+- New opt-in `notify.sh` hook bound to `Notification`, `Stop` and `StopFailure`, gated on
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cw-notify.json`; see README's Notifications section
+  for the field list and delivery paths (macOS Script Editor, Linux `notify-send`).

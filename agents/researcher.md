@@ -45,15 +45,12 @@ with the Skill tool rather than assuming its steps are already loaded.
   gap.
 
 ## Output format (required)
+Your final message is at most about 1,500 tokens: numbered findings, no
+narrative, no restated questions.
 
-### Findings
-- [Claim] — Source: [URL] ([publisher], [date if available]) — Confidence: high|medium|low
+1. [Claim], 2-3 lines. Grade: H (official docs) | M (practitioner, with
+   numbers) | L (inference). Source: [one URL].
+2. ...
 
-### Consensus
-[strong|weak|conflicting] across [N] sources
-
-### Gaps
-- [What could not be verified or found]
-
-### Recommendation
-[One paragraph: what the evidence points to and why]
+### Unsourced
+- [Claim you could not back with a citation, stated plainly as a guess]
