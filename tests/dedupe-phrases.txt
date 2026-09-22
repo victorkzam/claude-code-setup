@@ -1,0 +1,15 @@
+push directly to main
+one atomic commit per task
+Co-Authored-By
+PR is opened only after
+NO_VERDICT
+ground truth over
+counter-model
+in the same turn
+check-ignore
+source detection
+three-angle
+two human checkpoints
+explicit model
+context7 before
+never commits

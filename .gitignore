@@ -19,32 +19,27 @@
 !skills/**
 !hooks/
 !hooks/**
-!scripts/
-!scripts/**
 !tests/
 !tests/**
 
-# Allow only the project-local design-artifact directories under docs/
-# (plans and research), not the whole docs/ tree. Gitignore requires
-# un-ignoring each parent directory level before its children, so the
-# chain below is intentionally explicit rather than a single !docs/**.
+# Track the plugin manifest directory.
+!.claude-plugin/
+!.claude-plugin/**
+
+# Allow the project-local design-artifact directories under docs/plans/:
+# a future single-file design doc (docs/plans/<slug>.md) and this build's
+# folder (docs/plans/cw-plugin/) are tracked; any other docs/plans/<other>/
+# folder stays ignored. Gitignore requires un-ignoring each parent directory
+# level before its children, so the chain below is intentionally explicit
+# rather than a single !docs/plans/**.
 !docs/
 !docs/plans/
-!docs/plans/**
-!docs/research/
-!docs/research/**
+!docs/plans/*.md
+!docs/plans/cw-plugin/
+!docs/plans/cw-plugin/**
 
 !.github/
 !.github/**
-
-# Allow the repo-scoped setup skill under .claude/, but nothing else in
-# .claude/ (agent-memory, local settings, etc. must stay ignored). Gitignore
-# requires un-ignoring each parent directory level before its children, so
-# the chain below is intentionally explicit rather than a single !.claude/**.
-!.claude/
-!.claude/skills/
-!.claude/skills/setup/
-!.claude/skills/setup/**
 
 # Never track local, personal, or generated Claude Code state, even if a
 # future copy step drops it in here by mistake.
@@ -59,5 +54,5 @@ history.jsonl
 .DS_Store
 
 # Security rail: this repo must never ship an active repo-local settings
-# file, even though .claude/ is partially un-ignored above.
+# file, even though other repo-local .claude paths may be tracked above.
 .claude/settings.json
