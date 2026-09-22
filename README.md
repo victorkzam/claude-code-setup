@@ -1,6 +1,6 @@
 # cw — a Claude Code workflow plugin
 
-This repo *is* the Claude Code plugin `cw`: six skills, five agents, three
+This repo *is* the Claude Code plugin `cw`: six skills, five agents, four
 hooks, three rule files, one test runner, and CI. It implements a
 `/cw:design` -> `/cw:build` -> `/cw:ship` pipeline — research-grounded
 planning, delegated implementation with one atomic commit per task, and a
@@ -79,15 +79,27 @@ Loads the plugin for that session only.
 `disable-model-invocation: true` deliberately — they change files, branches,
 or open PRs, so they only run when you type the command.
 
+### The design review loop
+
+`/cw:design` converges with two `cw:design-reviewer` rounds by default (a
+third only after a verified critical finding survives round two), then runs
+`cw:direction-reviewer` once, but only when the design is architectural (a new
+subsystem, a public interface or schema, or a change to the loop itself).
+Append `lite` — `/cw:design <description> lite` — for a fix-up touching three
+files or fewer: one research angle, one review round, no direction pass. A
+review round that comes back with no parseable verdict follows the stall ladder
+in `rules/orchestration.md` (nudge, nudge, respawn, escalate) rather than a
+blind retry.
+
 ## Agents
 
-| Agent | Model | Role |
-|---|---|---|
-| `cw:researcher` | sonnet | Web research, read-only |
-| `cw:implementer` | sonnet (opus per-task for hard work) | Writes code, makes the task's commit |
-| `cw:reviewer` | opus | Reviews an implementer's diff, read-only |
-| `cw:design-reviewer` | opus | Doc/codebase fidelity review of a design draft |
-| `cw:direction-reviewer` | opus, effort xhigh | Premise/direction review, once per design |
+| Agent | Model | Turn cap | Role |
+|---|---|---|---|
+| `cw:researcher` | sonnet | 30 | Web research, read-only |
+| `cw:implementer` | sonnet (opus per-task for hard work) | 50 | Writes code, makes the task's commit |
+| `cw:reviewer` | opus | 40 | Reviews an implementer's diff, read-only |
+| `cw:design-reviewer` | opus | 40 | Doc/codebase fidelity review of a design draft |
+| `cw:direction-reviewer` | opus, effort xhigh | 15 | Premise/direction review, once per architectural design |
 
 `/cw:design` also spawns the built-in `Explore` agent with `model: haiku` on
 each call; the plugin ships no agent by that name — its agents load under the
@@ -186,7 +198,7 @@ claude plugin disable cw@skills-dir        # install path (a)
 claude plugin disable cw@claude-code-setup # install path (b)
 ```
 
-Turns all three hooks off at once. This is also the answer for a repo that
+Turns all four hooks off at once. This is also the answer for a repo that
 pushes to `main` by convention — `protect-branches.sh` has no opt-out
 environment variable by design, so disabling the plugin is the supported
 escape hatch, not a bypass flag on the hook itself.
@@ -215,6 +227,46 @@ named `git`, `git -c k="v w"` before push, and `gh api` calls are out of scope,
 and a line of prose that spells out a push to the default branch inside a
 command is blocked as if it were the command itself — keep such text in a file
 instead.
+
+## Notifications
+
+Opt-in: create `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cw-notify.json` — an empty
+`{}` turns it on with every default. `notify.sh` binds to `Notification`,
+`Stop` and `StopFailure`, pinging only when a human is actually waited on.
+
+Immediate pings (`Notification`): `permission_prompt` ("Permission needed"),
+`worker_permission_prompt` ("Permission needed (worker)", agent teams),
+`elicitation_dialog`/`elicitation_url_dialog` ("Input needed"), and
+`agent_needs_input`/`push_notification` (the event's message, or "Attention
+needed"). Inside a sub-agent only the two permission types pass, naming the
+agent type. Silent by design: `agent_completed`, `auth_success`,
+`computer_use_enter`/`computer_use_exit`, and the three quota types — a
+completed agent isn't a human wait, and quota events are noise.
+
+The waiting ping is the built-in `idle_prompt`, about 60 seconds after a turn
+ends, gated on the background-task count every `Stop` records for the session
+(`StopFailure` records 0): it pings only when that count is 0, and a missing
+or stale record (older than `stale_seconds`) also counts as 0, so the hook
+fails open.
+
+Config keys in `cw-notify.json`, all optional: `enabled` (true), `presence`
+(false), `idle_seconds` (300), `stale_seconds` (1800), `entrypoints`
+(`["cli"]`), `idle_message` ("Waiting for your input"). `presence`, off by
+default, only routes delivery: idle past `idle_seconds`, or a locked screen
+with a Remote Control bridge, skips the banner (the phone channel already
+delivers); a probe failure counts as "at the machine". `CW_NOTIFY=0` is the
+kill switch; `CW_NOTIFY_DRY_RUN=1` prints the banner line instead of showing
+it. Title is `<folder> · <session>` from the session registry, or the folder
+alone when the registry is absent.
+
+Linux delivers through `notify-send` when present, otherwise nothing. macOS
+15+ delivers the banner as **Script Editor** and needs that app allowed under
+System Settings › Notifications, or the hook exits 0 silently
+(practitioner-sourced — Apple doesn't document this).
+
+If a profile still has a user-level `Notification` hook in `settings.json`
+from before this plugin, remove it by hand: `notify.sh` replaces it, and a
+plugin hook and a settings hook bound to the same event both fire.
 
 ## Migration from the old installer
 
